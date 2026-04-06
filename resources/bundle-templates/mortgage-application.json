@@ -1,0 +1,12 @@
+{
+  "id": "mortgage-application",
+  "name": "Mortgage pre-approval / application",
+  "description": "Documents often requested for home loan applications.",
+  "items": [
+    { "categorySlug": "financial_tax_return", "label": "Tax returns (2 years)", "required": true, "sortOrder": 0 },
+    { "categorySlug": "financial_pay_stub", "label": "Pay stubs (recent)", "required": true, "sortOrder": 1 },
+    { "categorySlug": "financial_bank_statement", "label": "Bank statements", "required": true, "sortOrder": 2 },
+    { "categorySlug": "drivers_license", "label": "Photo ID", "required": true, "sortOrder": 3 },
+    { "categorySlug": "passport", "label": "Second ID (if required)", "required": false, "sortOrder": 4 }
+  ]
+}

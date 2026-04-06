@@ -1,0 +1,11 @@
+{
+  "id": "green-card-renewal",
+  "name": "Green card renewal (I-90)",
+  "description": "Common documents referenced when renewing a permanent resident card.",
+  "items": [
+    { "categorySlug": "immigration_green_card", "label": "Current green card (front/back)", "required": true, "sortOrder": 0 },
+    { "categorySlug": "passport", "label": "Valid passport", "required": true, "sortOrder": 1 },
+    { "categorySlug": "drivers_license", "label": "Government-issued photo ID", "required": false, "sortOrder": 2 },
+    { "categorySlug": "financial_tax_return", "label": "Recent tax return (if requested)", "required": false, "sortOrder": 3 }
+  ]
+}

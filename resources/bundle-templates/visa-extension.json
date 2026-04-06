@@ -1,0 +1,11 @@
+{
+  "id": "visa-extension",
+  "name": "Employment visa extension packet",
+  "description": "Typical documents for visa extension or amendment filings.",
+  "items": [
+    { "categorySlug": "immigration_visa", "label": "Current visa / approval notice", "required": true, "sortOrder": 0 },
+    { "categorySlug": "passport", "label": "Passport (biographical page)", "required": true, "sortOrder": 1 },
+    { "categorySlug": "financial_pay_stub", "label": "Recent pay stubs", "required": false, "sortOrder": 2 },
+    { "categorySlug": "academic_transcript", "label": "Degree / transcripts (if applicable)", "required": false, "sortOrder": 3 }
+  ]
+}

@@ -1,0 +1,276 @@
+:root {
+  --bg0: #07070a;
+  --bg1: #0e0e14;
+  --bg-elevated: rgba(255, 255, 255, 0.04);
+  --bg-glass: rgba(255, 255, 255, 0.06);
+  --border: rgba(255, 255, 255, 0.09);
+  --border-strong: rgba(255, 255, 255, 0.14);
+  --text: #f4f4f5;
+  --text-dim: #a1a1aa;
+  --accent: #a78bfa;
+  --accent-bright: #c4b5fd;
+  --cyan: #22d3ee;
+  --danger: #f87171;
+  --ok: #4ade80;
+  --warn: #fbbf24;
+  --radius: 12px;
+  --radius-sm: 8px;
+  --sidebar-w: 268px;
+  --glow: 0 0 80px rgba(139, 92, 246, 0.12);
+  font-family:
+    'DM Sans',
+    system-ui,
+    -apple-system,
+    sans-serif;
+  font-size: 15px;
+  color: var(--text);
+  background: var(--bg0);
+  line-height: 1.45;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+html,
+body,
+#app {
+  height: 100%;
+  margin: 0;
+}
+
+body {
+  background: var(--bg0);
+  overflow: hidden;
+}
+
+.mono {
+  font-family: 'JetBrains Mono', ui-monospace, monospace;
+  font-size: 0.82em;
+}
+
+a {
+  color: var(--accent-bright);
+  text-decoration: none;
+}
+
+a:hover {
+  text-decoration: underline;
+}
+
+button,
+.btn {
+  font: inherit;
+  cursor: pointer;
+  border-radius: var(--radius-sm);
+  border: 1px solid var(--border);
+  background: var(--bg-glass);
+  color: var(--text);
+  padding: 0.5rem 1rem;
+  transition:
+    background 0.15s,
+    border-color 0.15s,
+    box-shadow 0.15s;
+}
+
+button:hover:not(:disabled),
+.btn:hover:not(:disabled) {
+  background: rgba(255, 255, 255, 0.1);
+  border-color: var(--border-strong);
+}
+
+button:disabled,
+.btn:disabled {
+  opacity: 0.45;
+  cursor: not-allowed;
+}
+
+button.primary,
+.btn.primary {
+  border: none;
+  background: linear-gradient(135deg, #7c3aed 0%, #5b21b6 45%, #0891b2 100%);
+  color: #fff;
+  box-shadow: 0 2px 16px rgba(124, 58, 237, 0.35);
+}
+
+button.primary:hover:not(:disabled),
+.btn.primary:hover:not(:disabled) {
+  filter: brightness(1.08);
+  box-shadow: 0 4px 22px rgba(124, 58, 237, 0.45);
+}
+
+button.ghost {
+  background: transparent;
+  border-color: transparent;
+}
+
+button.ghost:hover:not(:disabled) {
+  background: rgba(255, 255, 255, 0.06);
+}
+
+button.danger {
+  border-color: rgba(248, 113, 113, 0.35);
+  color: var(--danger);
+}
+
+input,
+select,
+textarea {
+  font: inherit;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  padding: 0.5rem 0.75rem;
+  background: rgba(0, 0, 0, 0.35);
+  color: var(--text);
+  width: 100%;
+}
+
+input:focus,
+select:focus,
+textarea:focus {
+  outline: none;
+  border-color: rgba(167, 139, 250, 0.55);
+  box-shadow: 0 0 0 3px rgba(124, 58, 237, 0.2);
+}
+
+label {
+  display: block;
+  font-size: 0.78rem;
+  font-weight: 500;
+  letter-spacing: 0.02em;
+  text-transform: uppercase;
+  color: var(--text-dim);
+  margin-bottom: 0.35rem;
+}
+
+.stack {
+  display: flex;
+  flex-direction: column;
+  gap: 1rem;
+  min-width: 0;
+  width: 100%;
+  max-width: 100%;
+}
+
+.row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.6rem;
+  align-items: center;
+}
+
+.muted {
+  color: var(--text-dim);
+  font-size: 0.9rem;
+}
+
+.lead {
+  margin: 0;
+  color: var(--text-dim);
+  font-size: 0.95rem;
+  max-width: 100%;
+  width: 100%;
+}
+
+.card {
+  background: var(--bg-elevated);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  padding: 1.15rem 1.25rem;
+  backdrop-filter: blur(12px);
+  box-shadow: var(--glow);
+}
+
+.dropzone {
+  border: 1px dashed var(--border-strong);
+  border-radius: var(--radius);
+  padding: 2.25rem 1.5rem;
+  text-align: center;
+  color: var(--text-dim);
+  background: linear-gradient(165deg, rgba(124, 58, 237, 0.06) 0%, rgba(8, 145, 178, 0.05) 100%);
+  transition:
+    border-color 0.2s,
+    box-shadow 0.2s,
+    background 0.2s;
+}
+
+.dropzone.drag {
+  border-color: rgba(167, 139, 250, 0.65);
+  border-style: solid;
+  box-shadow:
+    0 0 0 1px rgba(167, 139, 250, 0.25),
+    0 8px 40px rgba(124, 58, 237, 0.2);
+  background: linear-gradient(165deg, rgba(124, 58, 237, 0.12) 0%, rgba(8, 145, 178, 0.08) 100%);
+}
+
+.badge {
+  display: inline-block;
+  font-size: 0.72rem;
+  font-weight: 600;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  padding: 0.2rem 0.55rem;
+  border-radius: 999px;
+  background: rgba(255, 255, 255, 0.08);
+  color: var(--text-dim);
+}
+
+.badge.ok {
+  background: rgba(74, 222, 128, 0.15);
+  color: var(--ok);
+}
+
+.badge.warn {
+  background: rgba(251, 191, 36, 0.15);
+  color: var(--warn);
+}
+
+.chip {
+  font: inherit;
+  font-size: 0.85rem;
+  cursor: pointer;
+  border-radius: 999px;
+  border: 1px solid var(--border);
+  background: transparent;
+  color: var(--text-dim);
+  padding: 0.35rem 0.85rem;
+  transition:
+    background 0.15s,
+    border-color 0.15s,
+    color 0.15s;
+}
+
+.chip:hover {
+  border-color: var(--border-strong);
+  color: var(--text);
+}
+
+.chip.active {
+  border-color: transparent;
+  color: #fff;
+  background: linear-gradient(135deg, rgba(124, 58, 237, 0.85) 0%, rgba(8, 145, 178, 0.75) 100%);
+  box-shadow: 0 2px 12px rgba(124, 58, 237, 0.25);
+}
+
+.section-title {
+  margin: 0;
+  font-size: 0.95rem;
+  font-weight: 600;
+  letter-spacing: -0.01em;
+}
+
+.back-link {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.35rem;
+  font-size: 0.88rem;
+  font-weight: 500;
+  color: var(--text-dim);
+  margin-bottom: 0.25rem;
+  text-decoration: none;
+}
+
+.back-link:hover {
+  color: var(--accent-bright);
+  text-decoration: none;
+}
