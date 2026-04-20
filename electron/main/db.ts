@@ -154,6 +154,15 @@ function migrate(database: Database.Database): void {
     }
     database.prepare('UPDATE schema_version SET version = 3').run()
   }
+
+  if (version < 4) {
+    const cols = database.prepare(`PRAGMA table_info(documents)`).all() as Array<{ name: string }>
+    const hasFiling = cols.some((c) => c.name === 'filing_name')
+    if (!hasFiling) {
+      database.exec(`ALTER TABLE documents ADD COLUMN filing_name TEXT`)
+    }
+    database.prepare('UPDATE schema_version SET version = 4').run()
+  }
 }
 
 export function closeDb(): void {

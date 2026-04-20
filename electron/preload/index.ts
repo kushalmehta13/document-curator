@@ -42,12 +42,14 @@ const api = {
       templateVars: Record<string, string>
       continueLater?: boolean
       metadata?: Record<string, string>
+      filingStem?: string
     }) => ipcRenderer.invoke('documents:finalize', payload),
+    computeFilingStem: (id: number) => ipcRenderer.invoke('documents:computeFilingStem', id),
     list: (filter?: { status?: string; categoryId?: number }) =>
       ipcRenderer.invoke('documents:list', filter),
     get: (id: number) => ipcRenderer.invoke('documents:get', id),
-    updateMetadata: (id: number, metadata: Record<string, string>) =>
-      ipcRenderer.invoke('documents:updateMetadata', id, metadata),
+    updateMetadata: (id: number, metadata: Record<string, string>, filingStem?: string | null) =>
+      ipcRenderer.invoke('documents:updateMetadata', id, metadata, filingStem),
     delete: (id: number) => ipcRenderer.invoke('documents:delete', id)
   },
   shell: {

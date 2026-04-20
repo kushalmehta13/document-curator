@@ -1,6 +1,6 @@
 import { ipcMain, dialog, shell, app } from 'electron'
 import { copyFile, unlink, stat } from 'fs/promises'
-import { join, basename } from 'path'
+import { join, basename, extname } from 'path'
 import { randomUUID } from 'crypto'
 import { getDb } from './db'
 import { getSettings, setSettings } from './settings'
@@ -8,6 +8,7 @@ import { finalizeFile, resolveTemplate, sanitizeFilename, ensureDir } from './fi
 import { suggestCategory } from './suggest'
 import { seedCategoriesIfEmpty, importBundleTemplatesFromDir } from './seed'
 import { analyzeDraftDocument } from './analyze'
+import { buildFilingFilename, sanitizeFileStem, suggestFilingStem } from './filing-name'
 function templatesDir(): string {
   if (app.isPackaged) {
     return join(process.resourcesPath, 'bundle-templates')
@@ -265,11 +266,48 @@ export function registerIpc(): void {
       if (s !== '') meta[k] = s
     }
 
+    const catRow = db
+      .prepare('SELECT slug, name FROM categories WHERE id = ?')
+      .get(suggestedId) as { slug: string; name: string } | undefined
+    const stemFromAnalysis =
+      typeof analysis.suggestedFileStem === 'string' ? analysis.suggestedFileStem.trim() : ''
+    const prevStem = String(row.filing_name || '').trim()
+    const computedStem = suggestFilingStem(
+      catRow?.slug ?? null,
+      meta,
+      catRow?.name ?? 'Document'
+    )
+    const filingStem = prevStem || stemFromAnalysis || computedStem
+
     db.prepare(
-      `UPDATE documents SET category_id = ?, metadata = ?, updated_at = datetime('now') WHERE id = ?`
-    ).run(suggestedId, JSON.stringify(meta), docId)
+      `UPDATE documents SET category_id = ?, metadata = ?, filing_name = ?, updated_at = datetime('now') WHERE id = ?`
+    ).run(suggestedId, JSON.stringify(meta), sanitizeFileStem(filingStem), docId)
 
     return true
+  })
+
+  ipcMain.handle('documents:computeFilingStem', (_e, docId: number) => {
+    const db = getDb()
+    const row = db
+      .prepare(
+        `SELECT d.metadata, c.slug, c.name FROM documents d
+         LEFT JOIN categories c ON c.id = d.category_id WHERE d.id = ?`
+      )
+      .get(docId) as
+      | { metadata: string | null; slug: string | null; name: string | null }
+      | undefined
+    if (!row) throw new Error('Document not found')
+    const meta: Record<string, string> = {}
+    try {
+      const o = JSON.parse(String(row.metadata || '{}')) as Record<string, unknown>
+      for (const [k, v] of Object.entries(o)) {
+        if (k.startsWith('__')) continue
+        meta[k] = v == null ? '' : String(v)
+      }
+    } catch {
+      /* empty */
+    }
+    return suggestFilingStem(row.slug, meta, row.name || 'Document')
   })
 
   ipcMain.handle(
@@ -282,6 +320,7 @@ export function registerIpc(): void {
         templateVars: Record<string, string>
         continueLater?: boolean
         metadata?: Record<string, string>
+        filingStem?: string
       }
     ) => {
       const db = getDb()
@@ -293,10 +332,44 @@ export function registerIpc(): void {
         payload.metadata !== undefined
           ? JSON.stringify(payload.metadata ?? {})
           : String(doc.metadata ?? '{}')
+
+      /** Stem for library file: explicit payload, else DB, else derive from original filename. */
+      const stemForFinalize = (): string | null => {
+        if (payload.filingStem !== undefined) {
+          const t = payload.filingStem.trim()
+          return t ? sanitizeFileStem(t) : null
+        }
+        if (doc.filing_name != null && String(doc.filing_name).trim() !== '') {
+          return sanitizeFileStem(String(doc.filing_name))
+        }
+        return null
+      }
+
+      const filingStemResolved = stemForFinalize()
+
       if (payload.continueLater) {
-        db.prepare(
-          `UPDATE documents SET category_id = ?, template_vars = ?, metadata = ?, updated_at = datetime('now') WHERE id = ?`
-        ).run(payload.categoryId, JSON.stringify(payload.templateVars ?? {}), metaJson, payload.id)
+        if (payload.filingStem !== undefined) {
+          const stem = payload.filingStem.trim() ? sanitizeFileStem(payload.filingStem) : null
+          db.prepare(
+            `UPDATE documents SET category_id = ?, template_vars = ?, metadata = ?, filing_name = ?,
+             updated_at = datetime('now') WHERE id = ?`
+          ).run(
+            payload.categoryId,
+            JSON.stringify(payload.templateVars ?? {}),
+            metaJson,
+            stem,
+            payload.id
+          )
+        } else {
+          db.prepare(
+            `UPDATE documents SET category_id = ?, template_vars = ?, metadata = ?, updated_at = datetime('now') WHERE id = ?`
+          ).run(
+            payload.categoryId,
+            JSON.stringify(payload.templateVars ?? {}),
+            metaJson,
+            payload.id
+          )
+        }
         return { ok: true, stored_path: doc.stored_path }
       }
 
@@ -310,13 +383,9 @@ export function registerIpc(): void {
       const destDir = join(settings.documentsRoot, rel)
       const currentPath = doc.stored_path as string
       const originalName = doc.original_name as string
+      const outName = buildFilingFilename(originalName, filingStemResolved)
 
-      const finalPath = await finalizeFile(
-        currentPath,
-        destDir,
-        originalName,
-        settings.fileMode
-      )
+      const finalPath = await finalizeFile(currentPath, destDir, outName, settings.fileMode)
 
       if (settings.fileMode === 'copy' && currentPath !== finalPath) {
         try {
@@ -326,14 +395,20 @@ export function registerIpc(): void {
         }
       }
 
+      const ext = extname(finalPath)
+      const stemStored = ext ? basename(finalPath, ext) : basename(finalPath)
+      const displayName = basename(finalPath)
+
       db.prepare(
         `UPDATE documents SET category_id = ?, stored_path = ?, inbox_path = NULL, status = 'complete',
-         template_vars = ?, metadata = ?, updated_at = datetime('now') WHERE id = ?`
+         template_vars = ?, metadata = ?, original_name = ?, filing_name = ?, updated_at = datetime('now') WHERE id = ?`
       ).run(
         payload.categoryId,
         finalPath,
         JSON.stringify(payload.templateVars ?? {}),
         metaJson,
+        displayName,
+        stemStored,
         payload.id
       )
 
@@ -369,12 +444,27 @@ export function registerIpc(): void {
       .get(id)
   })
 
-  ipcMain.handle('documents:updateMetadata', (_e, id: number, metadata: Record<string, string>) => {
-    getDb()
-      .prepare(`UPDATE documents SET metadata = ?, updated_at = datetime('now') WHERE id = ?`)
-      .run(JSON.stringify(metadata ?? {}), id)
-    return true
-  })
+  ipcMain.handle(
+    'documents:updateMetadata',
+    (_e, id: number, metadata: Record<string, string>, filingStem?: string | null) => {
+      if (filingStem !== undefined) {
+        const stem =
+          filingStem != null && String(filingStem).trim() !== ''
+            ? sanitizeFileStem(String(filingStem))
+            : null
+        getDb()
+          .prepare(
+            `UPDATE documents SET metadata = ?, filing_name = ?, updated_at = datetime('now') WHERE id = ?`
+          )
+          .run(JSON.stringify(metadata ?? {}), stem, id)
+      } else {
+        getDb()
+          .prepare(`UPDATE documents SET metadata = ?, updated_at = datetime('now') WHERE id = ?`)
+          .run(JSON.stringify(metadata ?? {}), id)
+      }
+      return true
+    }
+  )
 
   ipcMain.handle('documents:delete', async (_e, id: number) => {
     const db = getDb()

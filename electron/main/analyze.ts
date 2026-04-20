@@ -1,6 +1,7 @@
 import type Database from 'better-sqlite3'
 import { extractDocumentText } from './extract'
 import { classifyDocument, CONFIDENCE_AUTO_SELECT } from './classify'
+import { suggestFilingStem } from './filing-name'
 
 export type AnalysisResult = {
   ocr_status: string | null
@@ -52,6 +53,10 @@ export async function analyzeDraftDocument(
   const existingMeta = parseMetadata(row.metadata)
   const currentCat =
     row.category_id != null && row.category_id !== '' ? Number(row.category_id) : null
+  const prevFiling =
+    row.filing_name != null && String(row.filing_name).trim() !== ''
+      ? String(row.filing_name).trim()
+      : null
 
   const ex = await extractDocumentText(storedPath)
   const ocrStatus = ocrStatusFromExtract(ex.text, ex.source, ex.error)
@@ -68,11 +73,14 @@ export async function analyzeDraftDocument(
   }
 
   const merged: Record<string, string> = { ...existingMeta }
-  const sameType =
-    newCategoryId != null &&
-    classification.categoryId != null &&
-    newCategoryId === classification.categoryId
-  if (sameType) {
+
+  const catForDoc = newCategoryId ?? currentCat
+  const shouldMergeExtracted =
+    classification.suggestedCategoryId != null &&
+    catForDoc != null &&
+    catForDoc === classification.suggestedCategoryId
+
+  if (shouldMergeExtracted) {
     for (const [k, v] of Object.entries(classification.fields)) {
       if (!v) continue
       const cur = merged[k]
@@ -80,10 +88,26 @@ export async function analyzeDraftDocument(
     }
   }
 
+  const fieldsForStem: Record<string, string> = { ...classification.fields }
+  for (const [k, v] of Object.entries(merged)) {
+    if (fieldsForStem[k] == null || !String(fieldsForStem[k]).trim()) {
+      if (v != null && String(v).trim() !== '') fieldsForStem[k] = String(v).trim()
+    }
+  }
+
+  const suggestedStem = suggestFilingStem(
+    classification.slug,
+    fieldsForStem,
+    classification.name || 'Document'
+  )
+
+  const filingToStore = prevFiling ?? suggestedStem
+
   const analysisObj: Record<string, unknown> = {
     confidence: classification.confidence,
     suggestedCategoryId: classification.suggestedCategoryId,
     suggestedFields: classification.fields,
+    suggestedFileStem: suggestedStem,
     slug: classification.slug,
     name: classification.name,
     signals: classification.signals,
@@ -96,7 +120,7 @@ export async function analyzeDraftDocument(
   database
     .prepare(
       `UPDATE documents SET ocr_status = ?, ocr_raw = ?, analysis = ?, metadata = ?, category_id = ?,
-       updated_at = datetime('now') WHERE id = ?`
+       filing_name = ?, updated_at = datetime('now') WHERE id = ?`
     )
     .run(
       ocrStatus,
@@ -104,6 +128,7 @@ export async function analyzeDraftDocument(
       JSON.stringify(analysisObj),
       JSON.stringify(merged),
       newCategoryId,
+      filingToStore,
       documentId
     )
 

@@ -26,6 +26,13 @@ const showNewType = ref(false)
 const newType = ref({ name: '', slug: '', path_template: '', keywords: '' })
 const newTypeSchema = ref<Array<{ key: string; label: string }>>([{ key: '', label: '' }])
 
+/** Filename stem when filing (no extension); extension stays from the original upload. */
+const filingName = ref('')
+
+/** Inline “add metadata field” (Electron often blocks window.prompt in the renderer). */
+const showAddMetadataField = ref(false)
+const newMetadataKeyInput = ref('')
+
 const id = computed(() => Number(route.params.id))
 
 const isDraft = computed(() => doc.value?.status === 'draft')
@@ -107,10 +114,26 @@ const schemaFields = computed(() => {
   return parseSchema(raw)
 })
 
+const schemaFieldKeys = computed(() => new Set(schemaFields.value.map((f) => f.key)))
+
+/** Keys present in metadata but not in the category template (user-added or legacy). */
+const extraMetadataKeys = computed(() =>
+  Object.keys(metadata.value)
+    .filter((k) => !schemaFieldKeys.value.has(k))
+    .sort()
+)
+
 const ext = computed(() => {
   const n = String(doc.value?.original_name || '')
   const i = n.lastIndexOf('.')
   return i >= 0 ? n.slice(i + 1).toLowerCase() : ''
+})
+
+const originalStem = computed(() => stemFromOriginalFilename(String(doc.value?.original_name || '')))
+
+const displayDraftFilename = computed(() => {
+  const stem = filingName.value.trim() || originalStem.value || 'document'
+  return ext.value ? `${stem}.${ext.value}` : stem
 })
 
 const isImage = computed(() =>
@@ -147,6 +170,34 @@ function parseSchema(raw: unknown): Array<{ key: string; label: string }> {
   }
 }
 
+function stemFromOriginalFilename(name: string): string {
+  const n = String(name || '')
+  const i = n.lastIndexOf('.')
+  return i > 0 ? n.slice(0, i) : n
+}
+
+function loadFilingStemFromDoc(d: Record<string, unknown>) {
+  let stem = ''
+  if (d.filing_name != null && String(d.filing_name).trim() !== '') {
+    stem = String(d.filing_name).trim()
+  } else {
+    const raw = d.analysis
+    if (raw) {
+      try {
+        const ar =
+          typeof raw === 'string' ? (JSON.parse(raw) as Record<string, unknown>) : (raw as Record<string, unknown>)
+        if (typeof ar.suggestedFileStem === 'string' && ar.suggestedFileStem.trim()) {
+          stem = ar.suggestedFileStem.trim()
+        }
+      } catch {
+        /* ignore */
+      }
+    }
+    if (!stem) stem = stemFromOriginalFilename(String(d.original_name || ''))
+  }
+  filingName.value = stem
+}
+
 function ensureSchemaKeysInMetadata(fields: Array<{ key: string; label: string }>) {
   for (const f of fields) {
     if (metadata.value[f.key] === undefined) metadata.value[f.key] = ''
@@ -155,6 +206,8 @@ function ensureSchemaKeysInMetadata(fields: Array<{ key: string; label: string }
 
 async function load() {
   msg.value = ''
+  showAddMetadataField.value = false
+  newMetadataKeyInput.value = ''
   const d = await window.api.documents.get(id.value)
   doc.value = d ?? null
   if (!d) return
@@ -166,6 +219,7 @@ async function load() {
   ensureSchemaKeysInMetadata(schemaFromDoc)
   const sel = categories.value.find((c) => c.id === categoryId.value)
   if (sel) ensureSchemaKeysInMetadata(parseSchema(sel.metadata_schema))
+  loadFilingStemFromDoc(d)
 }
 
 onMounted(load)
@@ -195,7 +249,11 @@ async function saveMetadata() {
   if (!doc.value) return
   busy.value = true
   try {
-    await window.api.documents.updateMetadata(Number(doc.value.id), metadataForExport())
+    await window.api.documents.updateMetadata(
+      Number(doc.value.id),
+      metadataForExport(),
+      filingName.value.trim()
+    )
     msg.value = 'Saved'
     await load()
   } finally {
@@ -215,7 +273,8 @@ async function saveProgress() {
       categoryId: categoryId.value,
       templateVars: { ...templateVars.value },
       continueLater: true,
-      metadata: metadataForExport()
+      metadata: metadataForExport(),
+      filingStem: filingName.value.trim()
     })
     msg.value = 'Draft saved'
     await load()
@@ -236,7 +295,8 @@ async function finalize() {
       categoryId: categoryId.value,
       templateVars: { ...templateVars.value },
       continueLater: false,
-      metadata: metadataForExport()
+      metadata: metadataForExport(),
+      filingStem: filingName.value.trim()
     })
     msg.value = 'Filed'
     await load()
@@ -260,6 +320,19 @@ async function rerunAnalysis(resetCategory: boolean) {
     await load()
   } catch (e) {
     msg.value = e instanceof Error ? e.message : 'Analysis failed'
+  } finally {
+    busy.value = false
+  }
+}
+
+async function refreshFilingStemFromDetails() {
+  if (!doc.value) return
+  busy.value = true
+  try {
+    filingName.value = await window.api.documents.computeFilingStem(Number(doc.value.id))
+    msg.value = 'Updated file name from category and metadata.'
+  } catch (e) {
+    msg.value = e instanceof Error ? e.message : 'Could not suggest a file name'
   } finally {
     busy.value = false
   }
@@ -302,12 +375,39 @@ function copyJson() {
   void navigator.clipboard.writeText(JSON.stringify(metadataForExport(), null, 2))
 }
 
-function addCustomField() {
-  const key = window.prompt('Field name (e.g. dl_number)')
-  if (!key || !key.trim()) return
-  const k = key.trim()
-  if (metadata.value[k] !== undefined) return
-  metadata.value[k] = ''
+function normalizeMetadataKey(raw: string): string {
+  return raw
+    .trim()
+    .toLowerCase()
+    .replace(/\s+/g, '_')
+    .replace(/[^a-z0-9_]/g, '')
+}
+
+function openAddMetadataField() {
+  showAddMetadataField.value = true
+  newMetadataKeyInput.value = ''
+  msg.value = ''
+}
+
+function cancelAddMetadataField() {
+  showAddMetadataField.value = false
+  newMetadataKeyInput.value = ''
+}
+
+function confirmAddMetadataField() {
+  const k = normalizeMetadataKey(newMetadataKeyInput.value)
+  if (!k) {
+    msg.value = 'Enter a field name using letters, numbers, or underscores.'
+    return
+  }
+  if (metadata.value[k] !== undefined) {
+    msg.value = `A field named “${k}” already exists.`
+    return
+  }
+  metadata.value = { ...metadata.value, [k]: '' }
+  showAddMetadataField.value = false
+  newMetadataKeyInput.value = ''
+  msg.value = ''
 }
 
 function addNewTypeSchemaRow() {
@@ -391,7 +491,13 @@ async function openDefault() {
     </RouterLink>
     <div class="row" style="justify-content: space-between; align-items: flex-start">
       <div>
-        <h1 class="doc-title">{{ doc.original_name }}</h1>
+        <h1 class="doc-title">
+          <template v-if="isDraft">{{ displayDraftFilename }}</template>
+          <template v-else>{{ doc.original_name }}</template>
+        </h1>
+        <p v-if="isDraft" class="muted small" style="margin: 0.25rem 0 0">
+          Original upload: {{ doc.original_name }}
+        </p>
         <p class="muted mono path-line" style="margin: 0.35rem 0 0">{{ doc.stored_path }}</p>
       </div>
       <div class="row">
@@ -501,6 +607,28 @@ async function openDefault() {
             become a folder named “unknown”.
           </p>
 
+          <div style="margin-top: 0.75rem">
+            <div class="row" style="justify-content: space-between; align-items: flex-end; gap: 0.5rem">
+              <div class="grow">
+                <label>File name when filed</label>
+                <input v-model="filingName" :placeholder="originalStem || 'Descriptive name'" />
+                <p class="muted small" style="margin: 0.25rem 0 0">
+                  Extension stays
+                  <span class="mono">.{{ ext || '…' }}</span>
+                  from the upload. Suggested from document type and metadata; edit as needed.
+                </p>
+              </div>
+              <button
+                type="button"
+                :disabled="busy || categoryId == null"
+                title="Recompute from selected category and metadata fields"
+                @click="refreshFilingStemFromDetails"
+              >
+                Refresh from details
+              </button>
+            </div>
+          </div>
+
           <div class="row" style="justify-content: space-between; margin-top: 0.75rem">
             <h2 style="margin: 0; font-size: 1rem">Metadata</h2>
             <button type="button" class="ghost" @click="copyJson">Copy JSON</button>
@@ -509,29 +637,53 @@ async function openDefault() {
             Values are filled locally from text/OCR when possible — edit anything that looks wrong
             before filing.
           </p>
-          <div v-for="f in schemaFields" :key="f.key" class="field-row">
+          <div v-for="f in schemaFields" :key="'s-' + f.key" class="field-row">
             <div class="grow">
               <label>{{ f.label }}</label>
               <input v-model="metadata[f.key]" />
             </div>
             <button type="button" class="ghost" @click="copyField(f.key)">Copy</button>
           </div>
-          <template v-if="!schemaFields.length && selectedCategory">
-            <p class="muted" style="margin: 0">
-              This type has no field template yet. Add custom keys or edit the type in Settings.
-            </p>
-            <div v-for="key in Object.keys(metadata)" :key="key" class="field-row">
-              <div class="grow">
-                <label>{{ key }}</label>
-                <input v-model="metadata[key]" />
-              </div>
-              <button type="button" class="ghost" @click="copyField(key)">Copy</button>
+          <p v-if="!schemaFields.length && selectedCategory" class="muted" style="margin: 0">
+            This type has no field template in Settings — only custom fields below.
+          </p>
+          <div v-for="key in extraMetadataKeys" :key="'x-' + key" class="field-row">
+            <div class="grow">
+              <label>{{ key }} <span class="muted small">(custom)</span></label>
+              <input v-model="metadata[key]" />
             </div>
-            <button type="button" class="ghost" @click="addCustomField">Add field…</button>
-          </template>
-          <template v-if="!schemaFields.length && !selectedCategory">
-            <p class="muted" style="margin: 0">Pick a category to see metadata fields.</p>
-          </template>
+            <button type="button" class="ghost" @click="copyField(key)">Copy</button>
+          </div>
+          <div
+            v-if="showAddMetadataField"
+            class="add-meta-inline stack"
+            style="padding: 0.75rem; border: 1px solid var(--border); border-radius: var(--radius)"
+          >
+            <label style="margin: 0">New field key</label>
+            <input
+              v-model="newMetadataKeyInput"
+              type="text"
+              placeholder="e.g. notes or renewal_date"
+              autocomplete="off"
+              @keydown.enter.prevent="confirmAddMetadataField"
+            />
+            <div class="row" style="gap: 0.5rem; flex-wrap: wrap">
+              <button type="button" class="primary" @click="confirmAddMetadataField">Add field</button>
+              <button type="button" class="ghost" @click="cancelAddMetadataField">Cancel</button>
+            </div>
+          </div>
+          <button
+            v-else
+            type="button"
+            class="ghost"
+            style="align-self: flex-start"
+            @click="openAddMetadataField"
+          >
+            Add metadata field…
+          </button>
+          <p v-if="!selectedCategory" class="muted small" style="margin: 0">
+            Pick a category above to show template fields; custom fields work either way.
+          </p>
           <button type="button" :disabled="busy" @click="saveMetadata">Save metadata</button>
 
           <div class="row" style="margin-top: 0.75rem">
@@ -548,26 +700,50 @@ async function openDefault() {
             <button type="button" class="ghost" @click="copyJson">Copy JSON</button>
           </div>
           <p class="muted" style="margin: 0">Copy fields when filling forms.</p>
-          <div v-for="f in schemaFields" :key="f.key" class="field-row">
+          <div v-for="f in schemaFields" :key="'sf-' + f.key" class="field-row">
             <div class="grow">
               <label>{{ f.label }}</label>
               <input v-model="metadata[f.key]" />
             </div>
             <button type="button" class="ghost" @click="copyField(f.key)">Copy</button>
           </div>
-          <template v-if="!schemaFields.length">
-            <p class="muted" style="margin: 0">
-              No field template for this category. Add keys below or define a schema in Settings.
-            </p>
-            <div v-for="key in Object.keys(metadata)" :key="key" class="field-row">
-              <div class="grow">
-                <label>{{ key }}</label>
-                <input v-model="metadata[key]" />
-              </div>
-              <button type="button" class="ghost" @click="copyField(key)">Copy</button>
+          <p v-if="!schemaFields.length" class="muted" style="margin: 0">
+            No field template for this category — add fields here or define a schema in Settings.
+          </p>
+          <div v-for="key in extraMetadataKeys" :key="'ef-' + key" class="field-row">
+            <div class="grow">
+              <label>{{ key }} <span class="muted small">(custom)</span></label>
+              <input v-model="metadata[key]" />
             </div>
-            <button type="button" class="ghost" @click="addCustomField">Add field…</button>
-          </template>
+            <button type="button" class="ghost" @click="copyField(key)">Copy</button>
+          </div>
+          <div
+            v-if="showAddMetadataField"
+            class="add-meta-inline stack"
+            style="padding: 0.75rem; border: 1px solid var(--border); border-radius: var(--radius)"
+          >
+            <label style="margin: 0">New field key</label>
+            <input
+              v-model="newMetadataKeyInput"
+              type="text"
+              placeholder="e.g. notes or renewal_date"
+              autocomplete="off"
+              @keydown.enter.prevent="confirmAddMetadataField"
+            />
+            <div class="row" style="gap: 0.5rem; flex-wrap: wrap">
+              <button type="button" class="primary" @click="confirmAddMetadataField">Add field</button>
+              <button type="button" class="ghost" @click="cancelAddMetadataField">Cancel</button>
+            </div>
+          </div>
+          <button
+            v-else
+            type="button"
+            class="ghost"
+            style="align-self: flex-start"
+            @click="openAddMetadataField"
+          >
+            Add metadata field…
+          </button>
           <button type="button" class="primary" :disabled="busy" @click="saveMetadata">Save metadata</button>
         </template>
 

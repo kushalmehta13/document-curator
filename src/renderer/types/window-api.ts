@@ -46,10 +46,16 @@ export type WindowApi = {
       templateVars: Record<string, string>
       continueLater?: boolean
       metadata?: Record<string, string>
+      filingStem?: string
     }) => Promise<{ ok: boolean; stored_path: string }>
+    computeFilingStem: (id: number) => Promise<string>
     list: (filter?: { status?: string; categoryId?: number }) => Promise<unknown[]>
     get: (id: number) => Promise<Record<string, unknown> | undefined>
-    updateMetadata: (id: number, metadata: Record<string, string>) => Promise<boolean>
+    updateMetadata: (
+      id: number,
+      metadata: Record<string, string>,
+      filingStem?: string | null
+    ) => Promise<boolean>
     delete: (id: number) => Promise<boolean>
   }
   shell: {

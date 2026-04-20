@@ -85,12 +85,15 @@ const FIELD_REGEX: Record<string, Record<string, RegExp>> = {
     period: /\b(pay\s+period|period\s+ending)[:\s]+([^\n]{4,40})/i
   },
   passport: {
-    passport_number: /\bpassport\s*(no\.?|number|#)?\s*[:\s]?\s*([A-Z0-9]{6,12})\b/i,
-    country: /\bnationality[:\s]+([A-Za-z ]{2,40})/i
+    passport_number: /\bpassport\s*(no\.?|number|#)?\s*[:\s]?\s*([A-Z0-9]{6,14})\b/i,
+    country: /\bnationality[:\s]+([A-Za-z][A-Za-z\s]{1,36}?)(?:\n|$|\s{2,}|[,.])/i,
+    expiry: /\bexp(?:ir(?:y|ation|es?))?\.?\s*[:\s.]+\s*(\d{1,2}[\s./-]+\d{1,2}[\s./-]+\d{2,4})/i
   },
   drivers_license: {
-    dl_number: /\bDL\s*#?\s*:?\s*([A-Z0-9*]{4,20})\b/i,
-    state: /\b([A-Z]{2})\s+DRIVER/i
+    dl_number: /\b(?:DL|LIC(?:ENSE)?)\s*[#:\s.]*\s*([A-Z0-9*]{5,})\b/i,
+    state: /\b([A-Z]{2})\s+Driver'?s?\s+Licens/i,
+    expiry: /\bexp(?:\.|iry)?\s*[:\s.]+\s*(\d{1,2}[\s/-]+\d{1,2}[\s/-]+\d{2,4})/i,
+    issue_date: /\biss(?:ued?|ue)?\.?\s*[:\s.]+\s*(\d{1,2}[\s/-]+\d{1,2}[\s/-]+\d{2,4})/i
   },
   immigration_visa: {
     visa_type: /\b(class|category)\s*[:\s]+([A-Z0-9-]{2,10})\b/i,
@@ -165,6 +168,100 @@ function hintScore(slug: string, haystack: string): { score: number; signals: st
   return { score, signals }
 }
 
+function fillIfEmpty(out: Record<string, string>, key: string, value: string | undefined) {
+  if (value == null || !String(value).trim()) return
+  if (out[key] != null && String(out[key]).trim() !== '') return
+  out[key] = String(value).trim()
+}
+
+/** Extra heuristics for OCR-noisy passport images (MRZ-ish and common labels). */
+function enrichPassportFields(haystack: string, out: Record<string, string>) {
+  const h = haystack.replace(/\r/g, '\n')
+
+  const numPatterns = [
+    /\b([A-Z]\d{8,9})\b/,
+    /Passport\s*(?:No\.?|Number|#)?\s*[:\s]{0,3}([A-Z0-9]{6,14})\b/i,
+    /(?:^|\s)PPT\s*#?\s*([A-Z0-9]{6,14})\b/i,
+    /Document\s*No\.?\s*[:\s]*([A-Z0-9]{6,14})\b/i
+  ]
+  for (const re of numPatterns) {
+    const m = h.match(re)
+    if (m?.[1]) {
+      fillIfEmpty(out, 'passport_number', m[1])
+      break
+    }
+  }
+
+  const mrz = h.match(/[\n\r]([A-Z0-9<]{9})\d([A-Z<]{3})/)
+  if (mrz?.[1]) {
+    const num = mrz[1].replace(/</g, '')
+    if (num.length >= 6) fillIfEmpty(out, 'passport_number', num)
+  }
+
+  const expPatterns = [
+    /Exp(?:ir(?:y|ation|es?))?\.?\s*[:\s.]+\s*(\d{1,2}[\s./-]+\d{1,2}[\s./-]+\d{2,4})/i,
+    /(?:Date\s+of\s+)?Exp(?:iry)?\s*[:\s]+\s*(\d{2}\s+[A-Za-z]{3}\s+\d{4})/i,
+    /(\d{1,2}[\s./-]\d{1,2}[\s./-]\d{4})\s*(?:EXP|Expires?)\b/i
+  ]
+  for (const re of expPatterns) {
+    const m = h.match(re)
+    if (m?.[1]) {
+      fillIfEmpty(out, 'expiry', m[1].trim())
+      break
+    }
+  }
+
+  const nat = h.match(/Nationality[:\s]+([A-Za-z][A-Za-z\s]{0,28}?)(?:\n|$|\s{2,}|[,.])/i)
+  if (nat?.[1]) fillIfEmpty(out, 'country', nat[1].trim())
+
+  const iss = h.match(/Issuing\s+(?:country|state|authority)[:\s]+([A-Za-z][^\n]{0,30}?)(?:\n|$)/i)
+  if (iss?.[1]) fillIfEmpty(out, 'country', iss[1].trim())
+
+  if (!out.country && /\bUnited\s+States\s+of\s+America\b/i.test(h)) fillIfEmpty(out, 'country', 'USA')
+  if (!out.country && /\bUSA\b/i.test(h)) fillIfEmpty(out, 'country', 'USA')
+}
+
+/** Extra heuristics for US-style driver licenses and PDF417-style labels. */
+function enrichDriversLicenseFields(haystack: string, out: Record<string, string>) {
+  const h = haystack.replace(/\r/g, '\n')
+
+  const dlPatterns = [
+    /\b(?:DL|CDL|LIC(?:ENSE)?)\s*[#:\s.]*\s*([A-Z0-9*]{5,})\b/i,
+    /\bI\.?D\.?\s*(?:N(?:O)?\.?|Number)?\s*[#:\s.]*\s*([A-Z0-9*]{6,})\b/i,
+    /License\s*#\s*([A-Z0-9*]{5,})\b/i,
+    /Document\s*#?\s*[:\s]*([A-Z0-9*]{5,})\b/i
+  ]
+  for (const re of dlPatterns) {
+    const m = h.match(re)
+    if (m?.[1]) {
+      fillIfEmpty(out, 'dl_number', m[1].replace(/\*/g, ''))
+      break
+    }
+  }
+
+  const st = h.match(/\b([A-Z]{2})\s+Driver'?s?\s+Licens/i)
+  if (st?.[1]) fillIfEmpty(out, 'state', st[1])
+
+  const st2 = h.match(/State\s*[:\s]\s*([A-Z]{2})\b/i)
+  if (st2?.[1] && st2[1] !== 'XX') fillIfEmpty(out, 'state', st2[1])
+
+  const expPatterns = [
+    /EXP(?:\.|(?:IRATION|IRY)?)?\s*[:\s.]+\s*(\d{1,2}[\s/-]+\d{1,2}[\s/-]+\d{2,4})/i,
+    /Expires?\s*[:\s]+\s*(\d{1,2}[\s/-]+\d{1,2}[\s/-]+\d{2,4})/i,
+    /\b4[Dd]\s*[:\s]+\s*(\d{1,2}[\s/-]+\d{1,2}[\s/-]+\d{2,4})/
+  ]
+  for (const re of expPatterns) {
+    const m = h.match(re)
+    if (m?.[1]) {
+      fillIfEmpty(out, 'expiry', m[1].trim())
+      break
+    }
+  }
+
+  const iss = h.match(/ISS(?:UED?|UE)?\s*[:\s.]+\s*(\d{1,2}[\s/-]+\d{1,2}[\s/-]+\d{2,4})/i)
+  if (iss?.[1]) fillIfEmpty(out, 'issue_date', iss[1].trim())
+}
+
 function extractFieldsForSlug(
   slug: string,
   schema: SchemaField[],
@@ -172,16 +269,19 @@ function extractFieldsForSlug(
 ): Record<string, string> {
   const out: Record<string, string> = {}
   const perSlug = FIELD_REGEX[slug]
-  if (!perSlug) return out
-
-  for (const f of schema) {
-    const re = perSlug[f.key]
-    if (!re) continue
-    const m = haystack.match(re)
-    if (!m) continue
-    const cap = m.slice(1).find((g) => g != null && String(g).trim().length > 0)
-    if (cap) out[f.key] = String(cap).trim()
+  if (perSlug) {
+    for (const f of schema) {
+      const re = perSlug[f.key]
+      if (!re) continue
+      const m = haystack.match(re)
+      if (!m) continue
+      const cap = m.slice(1).find((g) => g != null && String(g).trim().length > 0)
+      if (cap) out[f.key] = String(cap).trim()
+    }
   }
+
+  if (slug === 'passport') enrichPassportFields(haystack, out)
+  else if (slug === 'drivers_license') enrichDriversLicenseFields(haystack, out)
 
   if (slug === 'financial_tax_return' && !out.year) {
     const y = haystack.match(/\b(20[0-2]\d)\b/)
