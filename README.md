@@ -4,11 +4,12 @@ A minimal **Electron + Vue 3** desktop app for organizing personal documents loc
 
 ## Features
 
-- **Inbox:** Add files with drag-and-drop or a file picker. Drafts stay in app storage until you pick a category and optional path variables (for example `{state}` for a driver license). Filename-based category suggestions; you can add new categories in Settings.
+- **Inbox:** Add files with drag-and-drop or a file picker. Drafts stay in app storage until you pick a category and optional path variables (for example `{state}` for a driver license). On ingest, the app runs **local** analysis: PDF text extraction (and a first-page render + OCR when the text layer is thin), **Tesseract.js** OCR for images, **rule-based classification** against your categories, and **metadata pre-fill** when patterns match. You can **re-run text/OCR**, **re-detect type**, correct any field, and **create a new document type** (with its own path template and metadata fields) without leaving the document screen.
 - **Library:** Filed documents grouped by category, with **preview** (images and PDF), **editable metadata** with per-field copy and JSON copy, **Show in Finder**, and **Open with default app**.
 - **Bundles:** Start a bundle from a template (JSON checklists in `resources/bundle-templates`), attach library documents to each required slot, and finish over time.
+- **Settings:** Define new categories with **metadata field templates** (key + label), filename keywords for hints, and path templates.
 
-Metadata is **manual** in v1; the database reserves fields for future OCR.
+Classification and OCR run **entirely on-device**. English (`eng`) trained data ships with the app via `@tesseract.js-data/eng` (no runtime download).
 
 ## Requirements
 
@@ -34,12 +35,19 @@ Artifacts appear under `release/` (for example `Document Curator-0.1.0-arm64.dmg
 
 To ship a signed build, configure macOS code signing and notarization as described in the [electron-builder code signing](https://www.electron.build/code-signing) documentation (then run `npm run dist` without disabling discovery).
 
-## Native module (contributors)
+## Native modules and local analysis (contributors)
 
-This project uses `better-sqlite3`. If `npm install` fails on your platform, try:
+This project ships native and WASM-heavy dependencies that are unpacked from the ASAR archive at build time:
+
+- **`better-sqlite3`** — local database
+- **`pdf-parse`** (with **`@napi-rs/canvas`**) — PDF text and rasterization for OCR fallback
+- **`tesseract.js`** / **`tesseract.js-core`** / **`@tesseract.js-data/eng`** — on-device OCR (English)
+
+If `npm install` fails on your platform, try:
 
 ```bash
 npm rebuild better-sqlite3
+npm rebuild @napi-rs/canvas
 ```
 
 ## Bundle templates

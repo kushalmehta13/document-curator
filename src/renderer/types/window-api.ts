@@ -1,4 +1,5 @@
 export type WindowApi = {
+  getPathForFile: (file: File) => string
   settings: {
     get: () => Promise<{ documentsRoot: string; fileMode: 'copy' | 'move' }>
     set: (partial: Record<string, unknown>) => Promise<{ documentsRoot: string; fileMode: 'copy' | 'move' }>
@@ -29,12 +30,22 @@ export type WindowApi = {
     createDraft: (sourcePath: string) => Promise<{
       id: number
       suggested: { slug: string; name: string; score: number } | null
+      analysis: Record<string, unknown> | null
+      categoryId: number | null
+      ocr_status: string | null
+      analysisError?: string
     }>
+    analyzeLocal: (payload: {
+      id: number
+      resetCategory?: boolean
+    }) => Promise<Record<string, unknown> | undefined>
+    applySuggestion: (id: number) => Promise<boolean>
     finalize: (payload: {
       id: number
       categoryId: number
       templateVars: Record<string, string>
       continueLater?: boolean
+      metadata?: Record<string, string>
     }) => Promise<{ ok: boolean; stored_path: string }>
     list: (filter?: { status?: string; categoryId?: number }) => Promise<unknown[]>
     get: (id: number) => Promise<Record<string, unknown> | undefined>

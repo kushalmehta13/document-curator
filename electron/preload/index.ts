@@ -1,6 +1,8 @@
-import { contextBridge, ipcRenderer } from 'electron'
+import { contextBridge, ipcRenderer, webUtils } from 'electron'
 
 const api = {
+  /** Real filesystem path for a File from drag-and-drop (renderer File has no .path). */
+  getPathForFile: (file: File) => webUtils.getPathForFile(file),
   settings: {
     get: () => ipcRenderer.invoke('settings:get'),
     set: (partial: Record<string, unknown>) => ipcRenderer.invoke('settings:set', partial)
@@ -31,11 +33,15 @@ const api = {
   documents: {
     suggestCategory: (filename: string) => ipcRenderer.invoke('documents:suggestCategory', filename),
     createDraft: (sourcePath: string) => ipcRenderer.invoke('documents:createDraft', sourcePath),
+    analyzeLocal: (payload: { id: number; resetCategory?: boolean }) =>
+      ipcRenderer.invoke('documents:analyzeLocal', payload),
+    applySuggestion: (id: number) => ipcRenderer.invoke('documents:applySuggestion', id),
     finalize: (payload: {
       id: number
       categoryId: number
       templateVars: Record<string, string>
       continueLater?: boolean
+      metadata?: Record<string, string>
     }) => ipcRenderer.invoke('documents:finalize', payload),
     list: (filter?: { status?: string; categoryId?: number }) =>
       ipcRenderer.invoke('documents:list', filter),

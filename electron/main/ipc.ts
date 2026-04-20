@@ -7,6 +7,7 @@ import { getSettings, setSettings } from './settings'
 import { finalizeFile, resolveTemplate, sanitizeFilename, ensureDir } from './files'
 import { suggestCategory } from './suggest'
 import { seedCategoriesIfEmpty, importBundleTemplatesFromDir } from './seed'
+import { analyzeDraftDocument } from './analyze'
 function templatesDir(): string {
   if (app.isPackaged) {
     return join(process.resourcesPath, 'bundle-templates')
@@ -160,7 +161,115 @@ export function registerIpc(): void {
       )
       .run(originalName, dest, dest)
     const docId = Number(r.lastInsertRowid)
-    return { id: docId, suggested: sug }
+
+    let analysisError: string | undefined
+    try {
+      await analyzeDraftDocument(db, docId)
+    } catch (err) {
+      analysisError = err instanceof Error ? err.message : String(err)
+    }
+
+    const after = db
+      .prepare(
+        `SELECT id, category_id, analysis, ocr_status, metadata FROM documents WHERE id = ?`
+      )
+      .get(docId) as Record<string, unknown> | undefined
+
+    let analysisParsed: Record<string, unknown> | null = null
+    if (after?.analysis && typeof after.analysis === 'string') {
+      try {
+        analysisParsed = JSON.parse(after.analysis) as Record<string, unknown>
+      } catch {
+        analysisParsed = null
+      }
+    }
+
+    return {
+      id: docId,
+      suggested: sug,
+      analysis: analysisParsed,
+      categoryId: after?.category_id != null ? Number(after.category_id) : null,
+      ocr_status: after?.ocr_status != null ? String(after.ocr_status) : null,
+      analysisError
+    }
+  })
+
+  ipcMain.handle(
+    'documents:analyzeLocal',
+    async (_e, payload: { id: number; resetCategory?: boolean }) => {
+      const db = getDb()
+      const doc = db.prepare('SELECT status FROM documents WHERE id = ?').get(payload.id) as
+        | { status: string }
+        | undefined
+      if (!doc) throw new Error('Document not found')
+      if (doc.status !== 'draft') throw new Error('Only drafts can be re-analyzed')
+      await analyzeDraftDocument(db, payload.id, { resetCategory: payload.resetCategory === true })
+      return db
+        .prepare(
+          `SELECT d.id, d.category_id, d.analysis, d.ocr_status, d.metadata,
+           c.name as category_name, c.slug as category_slug, c.path_template, c.metadata_schema
+           FROM documents d LEFT JOIN categories c ON c.id = d.category_id WHERE d.id = ?`
+        )
+        .get(payload.id)
+    }
+  )
+
+  ipcMain.handle('documents:applySuggestion', (_e, docId: number) => {
+    const db = getDb()
+    const row = db.prepare('SELECT * FROM documents WHERE id = ?').get(docId) as
+      | Record<string, unknown>
+      | undefined
+    if (!row) throw new Error('Document not found')
+    if (row.status !== 'draft') throw new Error('Only drafts can use suggestions')
+
+    let analysis: Record<string, unknown> = {}
+    try {
+      analysis = JSON.parse(String(row.analysis || '{}')) as Record<string, unknown>
+    } catch {
+      throw new Error('No analysis on this document — run local analysis first')
+    }
+
+    let suggestedId: number | undefined =
+      typeof analysis.suggestedCategoryId === 'number' ? analysis.suggestedCategoryId : undefined
+    if (suggestedId == null && typeof analysis.slug === 'string') {
+      const cat = db
+        .prepare('SELECT id FROM categories WHERE slug = ?')
+        .get(analysis.slug) as { id: number } | undefined
+      suggestedId = cat?.id
+    }
+    if (suggestedId == null) throw new Error('No suggested category — pick one manually')
+
+    const rawFields = analysis.suggestedFields
+    const fields =
+      rawFields &&
+      typeof rawFields === 'object' &&
+      rawFields !== null &&
+      !Array.isArray(rawFields)
+        ? (rawFields as Record<string, unknown>)
+        : {}
+
+    const meta: Record<string, string> = {}
+    try {
+      const o = JSON.parse(String(row.metadata || '{}')) as Record<string, unknown>
+      for (const [k, v] of Object.entries(o)) {
+        if (k.startsWith('__')) continue
+        meta[k] = v == null ? '' : String(v)
+      }
+    } catch {
+      /* empty */
+    }
+
+    for (const [k, v] of Object.entries(fields)) {
+      if (v == null) continue
+      const s = String(v).trim()
+      if (s !== '') meta[k] = s
+    }
+
+    db.prepare(
+      `UPDATE documents SET category_id = ?, metadata = ?, updated_at = datetime('now') WHERE id = ?`
+    ).run(suggestedId, JSON.stringify(meta), docId)
+
+    return true
   })
 
   ipcMain.handle(
@@ -172,6 +281,7 @@ export function registerIpc(): void {
         categoryId: number
         templateVars: Record<string, string>
         continueLater?: boolean
+        metadata?: Record<string, string>
       }
     ) => {
       const db = getDb()
@@ -179,10 +289,14 @@ export function registerIpc(): void {
         | Record<string, unknown>
         | undefined
       if (!doc) throw new Error('Document not found')
+      const metaJson =
+        payload.metadata !== undefined
+          ? JSON.stringify(payload.metadata ?? {})
+          : String(doc.metadata ?? '{}')
       if (payload.continueLater) {
         db.prepare(
-          `UPDATE documents SET category_id = ?, template_vars = ?, updated_at = datetime('now') WHERE id = ?`
-        ).run(payload.categoryId, JSON.stringify(payload.templateVars ?? {}), payload.id)
+          `UPDATE documents SET category_id = ?, template_vars = ?, metadata = ?, updated_at = datetime('now') WHERE id = ?`
+        ).run(payload.categoryId, JSON.stringify(payload.templateVars ?? {}), metaJson, payload.id)
         return { ok: true, stored_path: doc.stored_path }
       }
 
@@ -214,8 +328,14 @@ export function registerIpc(): void {
 
       db.prepare(
         `UPDATE documents SET category_id = ?, stored_path = ?, inbox_path = NULL, status = 'complete',
-         template_vars = ?, updated_at = datetime('now') WHERE id = ?`
-      ).run(payload.categoryId, finalPath, JSON.stringify(payload.templateVars ?? {}), payload.id)
+         template_vars = ?, metadata = ?, updated_at = datetime('now') WHERE id = ?`
+      ).run(
+        payload.categoryId,
+        finalPath,
+        JSON.stringify(payload.templateVars ?? {}),
+        metaJson,
+        payload.id
+      )
 
       return { ok: true, stored_path: finalPath }
     }

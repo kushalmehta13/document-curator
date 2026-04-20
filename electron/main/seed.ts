@@ -36,7 +36,7 @@ const DEFAULT_CATEGORIES: Array<{
     name: 'Birth certificate',
     slug: 'birth_certificate',
     path_template: 'Identification/BirthCertificate',
-    keywords: ['birth', 'certificate'],
+    keywords: ['birth', 'birth certificate', 'vital records', 'registry of vital', 'certify birth'],
     metadata_schema: [{ key: 'issued_by', label: 'Issued by' }]
   },
   {
@@ -74,7 +74,17 @@ const DEFAULT_CATEGORIES: Array<{
     name: 'Diploma / degree',
     slug: 'academic_diploma',
     path_template: 'Academic/Diplomas/{institution}',
-    keywords: ['diploma', 'degree', 'graduation'],
+    keywords: [
+      'diploma',
+      'degree',
+      'graduation',
+      'bachelor',
+      'master',
+      'university',
+      'college',
+      'degree certificate',
+      'graduation certificate'
+    ],
     metadata_schema: [{ key: 'institution', label: 'Institution' }, { key: 'degree', label: 'Degree' }]
   },
   {

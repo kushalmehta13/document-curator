@@ -15,6 +15,7 @@ protocol.registerSchemesAsPrivileged([
 import { join } from 'path'
 import { electronApp, optimizer, is } from '@electron-toolkit/utils'
 import { initDb, getDb, closeDb } from './db'
+import { terminateOcrWorker } from './extract'
 import { registerIpc, bootstrapData } from './ipc'
 
 let mainWindow: BrowserWindow | null = null
@@ -97,5 +98,6 @@ app.on('window-all-closed', () => {
 })
 
 app.on('before-quit', () => {
+  void terminateOcrWorker()
   closeDb()
 })

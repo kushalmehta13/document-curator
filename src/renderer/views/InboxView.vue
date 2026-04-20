@@ -29,6 +29,11 @@ async function ingestPath(path: string) {
   error.value = ''
   try {
     const r = await window.api.documents.createDraft(path)
+    if (r.analysisError) {
+      error.value = `Added draft, but local analysis hit a snag: ${r.analysisError}`
+    } else {
+      error.value = ''
+    }
     await load()
     router.push({ name: 'document', params: { id: String(r.id) } })
   } catch (e) {
@@ -42,9 +47,14 @@ function onDrop(e: DragEvent) {
   dragOver.value = false
   const f = e.dataTransfer?.files?.[0]
   if (!f) return
-  const path = (f as File & { path?: string }).path
-  if (path) void ingestPath(path)
-  else error.value = 'Drag files from Finder (desktop paths are required).'
+  try {
+    const path = window.api.getPathForFile(f)
+    if (path) void ingestPath(path)
+    else error.value = 'Could not resolve a path for that drop. Try “Choose file…” instead.'
+  } catch {
+    error.value =
+      'That drop has no file path (e.g. a browser download). Drop a file from Finder, or use “Choose file…”.'
+  }
 }
 
 function onDragOver(e: DragEvent) {
@@ -60,8 +70,9 @@ function onDragLeave() {
 <template>
   <div class="stack">
     <p class="lead">
-      Drop a PDF or image, or pick one from disk. We will suggest a category from the filename—you can
-      always change it, save progress, and come back later.
+      Drop a PDF or image, or pick one from disk. The app runs <strong>local</strong> text extraction and
+      OCR (when needed), suggests a document type, and pre-fills metadata when it can. You can always
+      correct fields, save progress, and come back later — nothing is sent online.
     </p>
 
     <div

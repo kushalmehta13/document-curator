@@ -5,3 +5,6 @@ dist/
 *.log
 .DS_Store
 *.local
+
+# Accidental local Tesseract data (use npm package @tesseract.js-data/eng)
+/eng.traineddata

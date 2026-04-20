@@ -22,6 +22,10 @@ const metadata = ref<Record<string, string>>({})
 const busy = ref(false)
 const msg = ref('')
 
+const showNewType = ref(false)
+const newType = ref({ name: '', slug: '', path_template: '', keywords: '' })
+const newTypeSchema = ref<Array<{ key: string; label: string }>>([{ key: '', label: '' }])
+
 const id = computed(() => Number(route.params.id))
 
 const isDraft = computed(() => doc.value?.status === 'draft')
@@ -35,14 +39,72 @@ const varKeys = computed(() => {
   return templateVarKeys(t)
 })
 
+const analysisRecord = computed((): Record<string, unknown> | null => {
+  const a = doc.value?.analysis
+  if (!a) return null
+  if (typeof a === 'string') {
+    try {
+      return JSON.parse(a) as Record<string, unknown>
+    } catch {
+      return null
+    }
+  }
+  if (typeof a === 'object') return a as Record<string, unknown>
+  return null
+})
+
+const detectionSummary = computed(() => {
+  const a = analysisRecord.value
+  if (!a) return null
+  const name = typeof a.name === 'string' ? a.name : null
+  const conf = typeof a.confidence === 'number' ? a.confidence : 0
+  const slug = typeof a.slug === 'string' ? a.slug : null
+  const extractSource = typeof a.extractSource === 'string' ? a.extractSource : null
+  const extractError = typeof a.extractError === 'string' ? a.extractError : null
+  const suggestedCategoryId = typeof a.suggestedCategoryId === 'number' ? a.suggestedCategoryId : null
+  const autoApplied = a.autoApplied === true
+  return { name, conf, slug, extractSource, extractError, suggestedCategoryId, autoApplied }
+})
+
+/** Resolves suggestion id from stored analysis (new `suggestedCategoryId` or legacy `slug`). */
+const resolvedSuggestion = computed((): { id: number; label: string } | null => {
+  const a = analysisRecord.value
+  if (!a) return null
+  if (typeof a.suggestedCategoryId === 'number') {
+    const label =
+      (typeof a.name === 'string' && a.name) ||
+      categories.value.find((c) => c.id === a.suggestedCategoryId)?.name ||
+      'Suggested type'
+    return { id: a.suggestedCategoryId, label }
+  }
+  const slug = typeof a.slug === 'string' ? a.slug : null
+  if (!slug) return null
+  const cat = categories.value.find((c) => c.slug === slug)
+  if (!cat) return null
+  const label =
+    (typeof a.name === 'string' && a.name) || cat.name || 'Suggested type'
+  return { id: cat.id, label }
+})
+
+const suggestionApplied = computed(() => {
+  if (!doc.value || !resolvedSuggestion.value) return false
+  const cur = doc.value.category_id
+  return cur != null && Number(cur) === resolvedSuggestion.value.id
+})
+
+const showUseSuggestion = computed(
+  () => isDraft.value && resolvedSuggestion.value != null && !suggestionApplied.value
+)
+
+const useSuggestionLabel = computed(() => resolvedSuggestion.value?.label ?? 'Suggested type')
+
 const schemaFields = computed(() => {
+  if (isDraft.value && selectedCategory.value?.metadata_schema) {
+    return parseSchema(selectedCategory.value.metadata_schema)
+  }
   const raw = doc.value?.metadata_schema as string | null | undefined
   if (!raw) return [] as Array<{ key: string; label: string }>
-  try {
-    return JSON.parse(raw) as Array<{ key: string; label: string }>
-  } catch {
-    return []
-  }
+  return parseSchema(raw)
 })
 
 const ext = computed(() => {
@@ -67,6 +129,7 @@ function parseJsonObject(s: unknown): Record<string, string> {
     const o = JSON.parse(s) as Record<string, unknown>
     const out: Record<string, string> = {}
     for (const [k, v] of Object.entries(o)) {
+      if (k.startsWith('__')) continue
       out[k] = v == null ? '' : String(v)
     }
     return out
@@ -84,6 +147,12 @@ function parseSchema(raw: unknown): Array<{ key: string; label: string }> {
   }
 }
 
+function ensureSchemaKeysInMetadata(fields: Array<{ key: string; label: string }>) {
+  for (const f of fields) {
+    if (metadata.value[f.key] === undefined) metadata.value[f.key] = ''
+  }
+}
+
 async function load() {
   msg.value = ''
   const d = await window.api.documents.get(id.value)
@@ -92,10 +161,11 @@ async function load() {
   categoryId.value = (d.category_id as number) || null
   metadata.value = parseJsonObject(d.metadata)
   templateVars.value = parseJsonObject(d.template_vars)
-  for (const f of parseSchema(d.metadata_schema)) {
-    if (metadata.value[f.key] === undefined) metadata.value[f.key] = ''
-  }
   categories.value = (await window.api.categories.list()) as Category[]
+  const schemaFromDoc = parseSchema(d.metadata_schema)
+  ensureSchemaKeysInMetadata(schemaFromDoc)
+  const sel = categories.value.find((c) => c.id === categoryId.value)
+  if (sel) ensureSchemaKeysInMetadata(parseSchema(sel.metadata_schema))
 }
 
 onMounted(load)
@@ -109,13 +179,23 @@ watch(selectedCategory, (c) => {
   for (const k of templateVarKeys(c.path_template)) {
     if (templateVars.value[k] === undefined) templateVars.value[k] = ''
   }
+  ensureSchemaKeysInMetadata(parseSchema(c.metadata_schema))
 })
+
+function metadataForExport(): Record<string, string> {
+  const out: Record<string, string> = {}
+  for (const [k, v] of Object.entries(metadata.value)) {
+    if (k.startsWith('__')) continue
+    out[k] = v
+  }
+  return out
+}
 
 async function saveMetadata() {
   if (!doc.value) return
   busy.value = true
   try {
-    await window.api.documents.updateMetadata(Number(doc.value.id), metadata.value)
+    await window.api.documents.updateMetadata(Number(doc.value.id), metadataForExport())
     msg.value = 'Saved'
     await load()
   } finally {
@@ -134,7 +214,8 @@ async function saveProgress() {
       id: Number(doc.value.id),
       categoryId: categoryId.value,
       templateVars: { ...templateVars.value },
-      continueLater: true
+      continueLater: true,
+      metadata: metadataForExport()
     })
     msg.value = 'Draft saved'
     await load()
@@ -154,12 +235,47 @@ async function finalize() {
       id: Number(doc.value.id),
       categoryId: categoryId.value,
       templateVars: { ...templateVars.value },
-      continueLater: false
+      continueLater: false,
+      metadata: metadataForExport()
     })
     msg.value = 'Filed'
     await load()
   } catch (e) {
     msg.value = e instanceof Error ? e.message : 'Could not file document'
+  } finally {
+    busy.value = false
+  }
+}
+
+async function rerunAnalysis(resetCategory: boolean) {
+  if (!doc.value) return
+  busy.value = true
+  msg.value = ''
+  try {
+    await window.api.documents.analyzeLocal({
+      id: Number(doc.value.id),
+      resetCategory
+    })
+    msg.value = resetCategory ? 'Re-detected type from local text/OCR.' : 'Local analysis refreshed.'
+    await load()
+  } catch (e) {
+    msg.value = e instanceof Error ? e.message : 'Analysis failed'
+  } finally {
+    busy.value = false
+  }
+}
+
+async function useSuggestion() {
+  if (!doc.value) return
+  busy.value = true
+  msg.value = ''
+  try {
+    await window.api.documents.applySuggestion(Number(doc.value.id))
+    msg.value =
+      'Applied suggested type and extracted fields. Review the category, path variables, and metadata, then file.'
+    await load()
+  } catch (e) {
+    msg.value = e instanceof Error ? e.message : 'Could not apply suggestion'
   } finally {
     busy.value = false
   }
@@ -183,7 +299,7 @@ function copyField(key: string) {
 }
 
 function copyJson() {
-  void navigator.clipboard.writeText(JSON.stringify(metadata.value, null, 2))
+  void navigator.clipboard.writeText(JSON.stringify(metadataForExport(), null, 2))
 }
 
 function addCustomField() {
@@ -192,6 +308,68 @@ function addCustomField() {
   const k = key.trim()
   if (metadata.value[k] !== undefined) return
   metadata.value[k] = ''
+}
+
+function addNewTypeSchemaRow() {
+  newTypeSchema.value.push({ key: '', label: '' })
+}
+
+function removeNewTypeSchemaRow(i: number) {
+  newTypeSchema.value.splice(i, 1)
+  if (!newTypeSchema.value.length) newTypeSchema.value.push({ key: '', label: '' })
+}
+
+function openNewTypeModal() {
+  newType.value = { name: '', slug: '', path_template: 'Misc/{name}', keywords: '' }
+  newTypeSchema.value = [
+    { key: 'title', label: 'Title' },
+    { key: 'date', label: 'Date' }
+  ]
+  showNewType.value = true
+}
+
+async function submitNewType() {
+  const name = newType.value.name.trim()
+  const path_template = newType.value.path_template.trim()
+  if (!name || !path_template) {
+    msg.value = 'Name and path template are required'
+    return
+  }
+  const slug =
+    newType.value.slug.trim() ||
+    name
+      .toLowerCase()
+      .replace(/[^a-z0-9]+/g, '_')
+      .replace(/^_|_$/g, '')
+  const keywords = newType.value.keywords
+    .split(',')
+    .map((k) => k.trim())
+    .filter(Boolean)
+  const metadata_schema = newTypeSchema.value
+    .map((r) => ({
+      key: r.key.trim(),
+      label: (r.label.trim() || r.key.trim()) as string
+    }))
+    .filter((r) => r.key.length > 0)
+
+  busy.value = true
+  try {
+    const newId = await window.api.categories.create({
+      name,
+      slug,
+      path_template,
+      keywords,
+      metadata_schema
+    })
+    await load()
+    categoryId.value = newId
+    showNewType.value = false
+    msg.value = `Created type “${name}”.`
+  } catch (e) {
+    msg.value = e instanceof Error ? e.message : 'Could not create type'
+  } finally {
+    busy.value = false
+  }
 }
 
 async function reveal() {
@@ -222,6 +400,73 @@ async function openDefault() {
       </div>
     </div>
     <p v-if="msg" class="muted" style="margin: 0">{{ msg }}</p>
+
+    <div v-if="isDraft" class="card detect-banner">
+      <details class="detect-details">
+        <summary>How local detection works</summary>
+        <p class="muted small" style="margin: 0.35rem 0 0">
+          The app reads text from the PDF (or runs OCR on images / scanned pages), then scores each of
+          your categories using filename keywords, phrases in the text (for example “Form 1040”, “degree
+          certificate”), and simple pattern lists. Scores are turned into a percentage for display only; they
+          are not “AI certainty.” The category dropdown is filled automatically only when the score is at or
+          above the app’s internal threshold (about 55%). Otherwise you stay in control: use
+          <strong>Use suggestion</strong> to apply the top match and any extracted metadata in one step,
+          or pick another category.
+        </p>
+      </details>
+      <template v-if="detectionSummary">
+        <p v-if="detectionSummary.name" style="margin: 0.75rem 0 0.35rem">
+          <strong>Top local match:</strong>
+          {{ detectionSummary.name }}
+          <span class="muted"
+            >({{ Math.round((detectionSummary.conf || 0) * 100) }}% score ·
+            {{ detectionSummary.extractSource || 'text' }})</span
+          >
+        </p>
+        <p v-else style="margin: 0.75rem 0 0.35rem">
+          <strong>Local analysis:</strong>
+          <span class="muted">No category scored strongly — pick a category or create one.</span>
+        </p>
+        <p
+          v-if="detectionSummary.autoApplied"
+          class="muted small"
+          style="margin: 0 0 0.35rem"
+        >
+          This score met the auto-select threshold, so the category below was set automatically. You can
+          still change it.
+        </p>
+        <p
+          v-else-if="suggestionApplied"
+          class="muted small"
+          style="margin: 0 0 0.35rem"
+        >
+          Suggested type and fields are applied — review and file when ready.
+        </p>
+        <p v-if="detectionSummary.extractError" class="muted" style="margin: 0; color: var(--danger)">
+          Text/OCR note: {{ detectionSummary.extractError }}
+        </p>
+      </template>
+      <p v-else class="muted" style="margin: 0.75rem 0 0.35rem">
+        No local analysis stored yet (or the first pass failed). Run text/OCR below — everything stays on
+        this device.
+      </p>
+      <div class="row" style="margin-top: 0.5rem; flex-wrap: wrap; gap: 0.35rem; align-items: center">
+        <button
+          v-if="showUseSuggestion"
+          type="button"
+          class="primary"
+          :disabled="busy"
+          @click="useSuggestion"
+        >
+          Use suggestion: {{ useSuggestionLabel }}
+        </button>
+        <button type="button" :disabled="busy" @click="rerunAnalysis(false)">Re-run text / OCR</button>
+        <button type="button" :disabled="busy" @click="rerunAnalysis(true)">Re-detect type</button>
+        <button type="button" class="ghost" :disabled="busy" @click="openNewTypeModal">
+          New document type…
+        </button>
+      </div>
+    </div>
 
     <div class="grid">
       <section class="card stack preview-card">
@@ -255,7 +500,41 @@ async function openDefault() {
             Path uses your category template under the documents root (see Settings). Missing pieces
             become a folder named “unknown”.
           </p>
-          <div class="row">
+
+          <div class="row" style="justify-content: space-between; margin-top: 0.75rem">
+            <h2 style="margin: 0; font-size: 1rem">Metadata</h2>
+            <button type="button" class="ghost" @click="copyJson">Copy JSON</button>
+          </div>
+          <p class="muted" style="margin: 0">
+            Values are filled locally from text/OCR when possible — edit anything that looks wrong
+            before filing.
+          </p>
+          <div v-for="f in schemaFields" :key="f.key" class="field-row">
+            <div class="grow">
+              <label>{{ f.label }}</label>
+              <input v-model="metadata[f.key]" />
+            </div>
+            <button type="button" class="ghost" @click="copyField(f.key)">Copy</button>
+          </div>
+          <template v-if="!schemaFields.length && selectedCategory">
+            <p class="muted" style="margin: 0">
+              This type has no field template yet. Add custom keys or edit the type in Settings.
+            </p>
+            <div v-for="key in Object.keys(metadata)" :key="key" class="field-row">
+              <div class="grow">
+                <label>{{ key }}</label>
+                <input v-model="metadata[key]" />
+              </div>
+              <button type="button" class="ghost" @click="copyField(key)">Copy</button>
+            </div>
+            <button type="button" class="ghost" @click="addCustomField">Add field…</button>
+          </template>
+          <template v-if="!schemaFields.length && !selectedCategory">
+            <p class="muted" style="margin: 0">Pick a category to see metadata fields.</p>
+          </template>
+          <button type="button" :disabled="busy" @click="saveMetadata">Save metadata</button>
+
+          <div class="row" style="margin-top: 0.75rem">
             <button type="button" @click="saveProgress" :disabled="busy">Save progress</button>
             <button type="button" class="primary" @click="finalize" :disabled="busy">
               Move to library
@@ -297,6 +576,57 @@ async function openDefault() {
         </button>
       </section>
     </div>
+
+    <div v-if="showNewType" class="modal-backdrop" @click.self="showNewType = false">
+      <div class="modal card stack">
+        <h2 style="margin: 0; font-size: 1.05rem">New document type</h2>
+        <p class="muted" style="margin: 0">
+          Creates a category with a path template and metadata fields. Everything stays on this Mac.
+        </p>
+        <div>
+          <label>Name</label>
+          <input v-model="newType.name" placeholder="e.g. Lease agreement" />
+        </div>
+        <div>
+          <label>Slug (optional)</label>
+          <input v-model="newType.slug" placeholder="auto from name" />
+        </div>
+        <div>
+          <label>Path template</label>
+          <input v-model="newType.path_template" placeholder="Legal/Leases/{property}" />
+        </div>
+        <div>
+          <label>Filename keywords (comma-separated)</label>
+          <input v-model="newType.keywords" placeholder="lease, rent" />
+        </div>
+        <div>
+          <div class="row" style="justify-content: space-between; align-items: center">
+            <label style="margin: 0">Metadata fields</label>
+            <button type="button" class="ghost" @click="addNewTypeSchemaRow">Add field</button>
+          </div>
+          <div
+            v-for="(row, i) in newTypeSchema"
+            :key="i"
+            class="row"
+            style="gap: 0.5rem; align-items: flex-end; margin-top: 0.35rem"
+          >
+            <div class="grow">
+              <label class="muted small">Key</label>
+              <input v-model="row.key" placeholder="e.g. property" />
+            </div>
+            <div class="grow">
+              <label class="muted small">Label</label>
+              <input v-model="row.label" placeholder="Shown in UI" />
+            </div>
+            <button type="button" class="danger ghost" @click="removeNewTypeSchemaRow(i)">✕</button>
+          </div>
+        </div>
+        <div class="row">
+          <button type="button" @click="showNewType = false">Cancel</button>
+          <button type="button" class="primary" :disabled="busy" @click="submitNewType">Create & select</button>
+        </div>
+      </div>
+    </div>
   </div>
 </template>
 
@@ -328,6 +658,18 @@ async function openDefault() {
   opacity: 0.85;
 }
 
+.detect-banner {
+  border: 1px solid var(--border);
+}
+.detect-details summary {
+  cursor: pointer;
+  font-weight: 600;
+  font-size: 0.9rem;
+}
+.detect-details summary::-webkit-details-marker {
+  display: none;
+}
+
 .preview-frame {
   min-height: 320px;
   border: 1px solid var(--border);
@@ -356,5 +698,23 @@ async function openDefault() {
 .grow {
   flex: 1;
   min-width: 0;
+}
+.small {
+  font-size: 0.78rem;
+}
+.modal-backdrop {
+  position: fixed;
+  inset: 0;
+  background: rgba(0, 0, 0, 0.55);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  z-index: 50;
+  padding: 1rem;
+}
+.modal {
+  width: min(520px, 100%);
+  max-height: 90vh;
+  overflow: auto;
 }
 </style>

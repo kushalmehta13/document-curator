@@ -10,7 +10,14 @@ export default defineConfig({
         entry: resolve(__dirname, 'electron/main/index.ts')
       },
       rollupOptions: {
-        external: ['better-sqlite3']
+        external: [
+          'better-sqlite3',
+          'pdf-parse',
+          'tesseract.js',
+          'tesseract.js-core',
+          '@tesseract.js-data/eng',
+          /^@napi-rs\/canvas$/
+        ]
       }
     }
   },

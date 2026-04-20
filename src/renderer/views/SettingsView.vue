@@ -5,7 +5,14 @@ const documentsRoot = ref('')
 const fileMode = ref<'copy' | 'move'>('copy')
 const msg = ref('')
 const categories = ref<
-  Array<{ id: number; name: string; slug: string; path_template: string; keywords: string | null }>
+  Array<{
+    id: number
+    name: string
+    slug: string
+    path_template: string
+    keywords: string | null
+    metadata_schema: string | null
+  }>
 >([])
 
 const newCat = ref({
@@ -14,6 +21,7 @@ const newCat = ref({
   path_template: '',
   keywords: ''
 })
+const newCatSchema = ref<Array<{ key: string; label: string }>>([{ key: '', label: '' }])
 
 async function load() {
   const s = await window.api.settings.get()
@@ -56,14 +64,21 @@ async function addCategory() {
     .split(',')
     .map((k) => k.trim())
     .filter(Boolean)
+  const metadata_schema = newCatSchema.value
+    .map((r) => ({
+      key: r.key.trim(),
+      label: (r.label.trim() || r.key.trim()) as string
+    }))
+    .filter((r) => r.key.length > 0)
   await window.api.categories.create({
     name: newCat.value.name.trim(),
     slug,
     path_template: newCat.value.path_template.trim(),
     keywords,
-    metadata_schema: []
+    metadata_schema
   })
   newCat.value = { name: '', slug: '', path_template: '', keywords: '' }
+  newCatSchema.value = [{ key: '', label: '' }]
   msg.value = 'Category added'
   await load()
 }
@@ -84,6 +99,29 @@ function parseKeywords(row: (typeof categories.value)[0]): string {
   } catch {
     return row.keywords
   }
+}
+
+function parseSchemaSummary(raw: string | null): string {
+  if (!raw) return ''
+  try {
+    const arr = JSON.parse(raw) as Array<{ key?: string; label?: string }>
+    if (!Array.isArray(arr) || !arr.length) return ''
+    return arr
+      .map((x) => (typeof x.label === 'string' ? x.label : x.key) || '')
+      .filter(Boolean)
+      .join(', ')
+  } catch {
+    return ''
+  }
+}
+
+function addSchemaRow() {
+  newCatSchema.value.push({ key: '', label: '' })
+}
+
+function removeSchemaRow(i: number) {
+  newCatSchema.value.splice(i, 1)
+  if (!newCatSchema.value.length) newCatSchema.value.push({ key: '', label: '' })
 }
 </script>
 
@@ -131,6 +169,9 @@ function parseKeywords(row: (typeof categories.value)[0]): string {
             <span class="muted"> · {{ c.slug }}</span>
             <div class="muted small">{{ c.path_template }}</div>
             <div v-if="parseKeywords(c)" class="muted small">Keywords: {{ parseKeywords(c) }}</div>
+            <div v-if="parseSchemaSummary(c.metadata_schema)" class="muted small">
+              Metadata fields: {{ parseSchemaSummary(c.metadata_schema) }}
+            </div>
           </div>
           <button type="button" class="danger ghost" @click="removeCategory(c.id)">Delete</button>
         </li>
@@ -152,6 +193,31 @@ function parseKeywords(row: (typeof categories.value)[0]): string {
       <div>
         <label>Filename keywords (comma-separated, for auto-suggest)</label>
         <input v-model="newCat.keywords" placeholder="ssn, social security" />
+      </div>
+      <div>
+        <div class="row" style="justify-content: space-between; align-items: center">
+          <label style="margin: 0">Metadata fields (key + label)</label>
+          <button type="button" class="ghost" @click="addSchemaRow">Add field</button>
+        </div>
+        <p class="muted small" style="margin: 0.25rem 0 0">
+          Used when filing and for local extraction hints. Keys should be lowercase with underscores.
+        </p>
+        <div
+          v-for="(row, i) in newCatSchema"
+          :key="i"
+          class="row"
+          style="gap: 0.5rem; align-items: flex-end; margin-top: 0.35rem"
+        >
+          <div class="grow">
+            <label class="muted small">Key</label>
+            <input v-model="row.key" placeholder="e.g. account_number" />
+          </div>
+          <div class="grow">
+            <label class="muted small">Label</label>
+            <input v-model="row.label" placeholder="Shown in UI" />
+          </div>
+          <button type="button" class="danger ghost" @click="removeSchemaRow(i)">✕</button>
+        </div>
       </div>
       <button type="button" class="primary" @click="addCategory">Add category</button>
     </section>
@@ -177,6 +243,10 @@ function parseKeywords(row: (typeof categories.value)[0]): string {
 }
 .small {
   font-size: 0.8rem;
+}
+.grow {
+  flex: 1;
+  min-width: 0;
 }
 code {
   font-family: 'JetBrains Mono', ui-monospace, monospace;

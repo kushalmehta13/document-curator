@@ -103,6 +103,57 @@ function migrate(database: Database.Database): void {
     `)
     database.prepare('UPDATE schema_version SET version = 1').run()
   }
+
+  if (version < 2) {
+    const cols = database.prepare(`PRAGMA table_info(documents)`).all() as Array<{ name: string }>
+    const hasAnalysis = cols.some((c) => c.name === 'analysis')
+    if (!hasAnalysis) {
+      database.exec(`ALTER TABLE documents ADD COLUMN analysis TEXT`)
+    }
+    database.prepare('UPDATE schema_version SET version = 2').run()
+  }
+
+  if (version < 3) {
+    const oldBirth = JSON.stringify(['birth', 'certificate'])
+    const oldDiploma = JSON.stringify(['diploma', 'degree', 'graduation'])
+    const rowBirth = database
+      .prepare(`SELECT keywords FROM categories WHERE slug = 'birth_certificate'`)
+      .get() as { keywords: string } | undefined
+    if (rowBirth?.keywords === oldBirth) {
+      database
+        .prepare(`UPDATE categories SET keywords = ? WHERE slug = 'birth_certificate'`)
+        .run(
+          JSON.stringify([
+            'birth',
+            'birth certificate',
+            'vital records',
+            'registry of vital',
+            'certify birth'
+          ])
+        )
+    }
+    const rowDip = database
+      .prepare(`SELECT keywords FROM categories WHERE slug = 'academic_diploma'`)
+      .get() as { keywords: string } | undefined
+    if (rowDip?.keywords === oldDiploma) {
+      database
+        .prepare(`UPDATE categories SET keywords = ? WHERE slug = 'academic_diploma'`)
+        .run(
+          JSON.stringify([
+            'diploma',
+            'degree',
+            'graduation',
+            'bachelor',
+            'master',
+            'university',
+            'college',
+            'degree certificate',
+            'graduation certificate'
+          ])
+        )
+    }
+    database.prepare('UPDATE schema_version SET version = 3').run()
+  }
 }
 
 export function closeDb(): void {
