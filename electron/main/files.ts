@@ -7,6 +7,12 @@ export function sanitizeFilename(name: string): string {
   return base || 'document'
 }
 
+/** Folder-safe segment derived from a profile name. */
+export function sanitizeFolderSegment(raw: string): string {
+  const s = String(raw || '').trim().replace(/[<>:"/\\|?*\x00-\x1f]/g, '_').replace(/\.+$/, '')
+  return s || 'profile'
+}
+
 export async function ensureDir(dir: string): Promise<void> {
   await mkdir(dir, { recursive: true })
 }

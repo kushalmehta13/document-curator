@@ -1,10 +1,36 @@
 export type WindowApi = {
   getPathForFile: (file: File) => string
   settings: {
-    get: () => Promise<{ documentsRoot: string; fileMode: 'copy' | 'move' }>
-    set: (partial: Record<string, unknown>) => Promise<{ documentsRoot: string; fileMode: 'copy' | 'move' }>
+    get: () => Promise<{
+      documentsRoot: string
+      fileMode: 'copy' | 'move'
+      activeProfileId: number | null
+    }>
+    set: (partial: Record<string, unknown>) => Promise<{
+      documentsRoot: string
+      fileMode: 'copy' | 'move'
+      activeProfileId: number | null
+    }>
   }
-  dialog: { openFile: () => Promise<string | null> }
+  profiles: {
+    list: () => Promise<
+      Array<{
+        id: number
+        name: string
+        slug: string
+        kind: 'person' | 'family' | 'pet'
+        color: string | null
+        sort_order: number
+        created_at: string
+        members: number[]
+      }>
+    >
+    create: (row: { name: string; kind: 'person' | 'family' | 'pet'; color?: string }) => Promise<number>
+    update: (id: number, partial: { name?: string; color?: string | null }) => Promise<boolean>
+    delete: (id: number) => Promise<{ ok: boolean; error?: string }>
+    setMembers: (familyId: number, memberIds: number[]) => Promise<boolean>
+  }
+  dialog: { openFile: () => Promise<string[]> }
   categories: {
     list: () => Promise<unknown[]>
     create: (row: {
@@ -49,7 +75,13 @@ export type WindowApi = {
       filingStem?: string
     }) => Promise<{ ok: boolean; stored_path: string }>
     computeFilingStem: (id: number) => Promise<string>
-    list: (filter?: { status?: string; categoryId?: number }) => Promise<unknown[]>
+    list: (filter?: {
+      status?: string
+      categoryId?: number
+      profileId?: number | null
+      useActiveProfile?: boolean
+    }) => Promise<unknown[]>
+    setProfile: (id: number, profileId: number | null) => Promise<boolean>
     get: (id: number) => Promise<Record<string, unknown> | undefined>
     updateMetadata: (
       id: number,
@@ -76,4 +108,51 @@ export type WindowApi = {
     delete: (bundleId: number) => Promise<boolean>
   }
   previewUrl: (documentId: number) => string
+  archive: {
+    export: (options?: { includeDrafts?: boolean }) => Promise<
+      | { ok: true; dir: string; counts: { profiles: number; categories: number; documents: number; bundles: number; copyErrors: number } }
+      | { ok: false; canceled: true }
+    >
+    importPreview: () => Promise<
+      | {
+          ok: true
+          plan: {
+            archive_dir: string
+            exported_at: string
+            rows: Array<{
+              hash: string
+              ext: string
+              original_name: string
+              filing_name: string | null
+              category_slug: string | null
+              category_name: string | null
+              profile_slug: string | null
+              profile_name: string | null
+              status: 'draft' | 'complete'
+              duplicate_kind: 'none' | 'same_spot' | 'different_spot'
+              recommended_action: 'import' | 'skip'
+              reason: string
+              existing: Array<{
+                id: number
+                stored_path: string
+                profile_name: string | null
+                category_name: string | null
+              }>
+            }>
+            totals: { total: number; new: number; same_spot: number; different_spot: number }
+          }
+        }
+      | { ok: false; canceled: true }
+    >
+    importApply: (payload: {
+      archive_dir: string
+      decisions: Array<{ hash: string; action: 'import' | 'skip'; profile_slug?: string | null }>
+    }) => Promise<{
+      ok: true
+      imported: number
+      skipped: number
+      bundlesImported: number
+      errors: Array<{ hash: string; message: string }>
+    }>
+  }
 }

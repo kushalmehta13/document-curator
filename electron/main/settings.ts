@@ -5,11 +5,13 @@ import { join } from 'path'
 export type AppSettings = {
   documentsRoot: string
   fileMode: 'copy' | 'move'
+  activeProfileId: number | null
 }
 
 const DEFAULTS: AppSettings = {
   documentsRoot: join(homedir(), 'Documents'),
-  fileMode: 'copy'
+  fileMode: 'copy',
+  activeProfileId: null
 }
 
 export function getSettings(): AppSettings {

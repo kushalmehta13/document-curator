@@ -3,6 +3,7 @@ import { dirname, join, sep } from 'path'
 import { tmpdir } from 'os'
 import { randomUUID } from 'crypto'
 import { createRequire } from 'node:module'
+import { isVisionAvailable, ocrImagesWithVision } from './vision-ocr'
 
 const require = createRequire(import.meta.url)
 
@@ -23,6 +24,9 @@ function extOf(filePath: string): string {
   return i >= 0 ? filePath.slice(i + 1).toLowerCase() : ''
 }
 
+const PDF_OCR_MAX_PAGES = 3
+const PDF_OCR_SCALE = 2.5
+
 async function extractPdfTextAndMaybeOcr(filePath: string): Promise<ExtractResult> {
   const { PDFParse } = await import('pdf-parse')
   const buf = await readFile(filePath)
@@ -34,24 +38,44 @@ async function extractPdfTextAndMaybeOcr(filePath: string): Promise<ExtractResul
       return { text: plain, source: 'pdf_text' }
     }
 
-    const shot = await parser.getScreenshot({ first: 1, scale: 1.5, imageBuffer: true, imageDataUrl: false })
-    const page0 = shot.pages[0]
-    if (!page0?.data?.length) {
+    const shot = await parser.getScreenshot({
+      first: PDF_OCR_MAX_PAGES,
+      scale: PDF_OCR_SCALE,
+      imageBuffer: true,
+      imageDataUrl: false
+    })
+    const pages = (shot.pages || []).filter((p) => p?.data?.length)
+    if (!pages.length) {
       return { text: plain, source: plain.length ? 'pdf_text' : 'none' }
     }
 
-    const tmp = join(tmpdir(), `curator-pdf-${randomUUID()}.png`)
-    try {
-      await writeFile(tmp, page0.data)
-      const ocrText = await ocrImageFile(tmp)
-      const merged = [plain, ocrText].filter(Boolean).join('\n').trim()
-      return { text: merged || plain, source: ocrText ? 'pdf_ocr' : plain.length ? 'pdf_text' : 'none' }
-    } finally {
+    const tmpPaths: string[] = []
+    for (const page of pages) {
+      const tmp = join(tmpdir(), `curator-pdf-${randomUUID()}.png`)
       try {
-        await unlink(tmp)
+        await writeFile(tmp, page.data!)
+        tmpPaths.push(tmp)
       } catch {
-        /* ignore */
+        /* skip page */
       }
+    }
+    let ocrText = ''
+    try {
+      const chunks = await ocrImageFiles(tmpPaths)
+      ocrText = chunks.filter(Boolean).join('\n').trim()
+    } finally {
+      for (const t of tmpPaths) {
+        try {
+          await unlink(t)
+        } catch {
+          /* ignore */
+        }
+      }
+    }
+    const merged = [plain, ocrText].filter(Boolean).join('\n').trim()
+    return {
+      text: merged || plain,
+      source: ocrText ? 'pdf_ocr' : plain.length ? 'pdf_text' : 'none'
     }
   } catch (err) {
     const msg = err instanceof Error ? err.message : String(err)
@@ -88,7 +112,7 @@ async function getOcrWorker(): Promise<import('tesseract.js').Worker> {
   return workerSingleton
 }
 
-async function ocrImageFile(imagePath: string): Promise<string> {
+async function ocrImageFileTesseract(imagePath: string): Promise<string> {
   try {
     const worker = await getOcrWorker()
     const {
@@ -99,6 +123,42 @@ async function ocrImageFile(imagePath: string): Promise<string> {
     const msg = err instanceof Error ? err.message : String(err)
     throw new Error(`OCR failed: ${msg}`)
   }
+}
+
+/** OCR a single image. Apple Vision on macOS when available; Tesseract otherwise. */
+async function ocrImageFile(imagePath: string): Promise<string> {
+  if (await isVisionAvailable()) {
+    try {
+      const pages = await ocrImagesWithVision([imagePath])
+      const t = (pages[0]?.text || '').trim()
+      if (t) return t
+    } catch {
+      /* fall through to Tesseract */
+    }
+  }
+  return ocrImageFileTesseract(imagePath)
+}
+
+/** OCR many images in one shot when possible (single Vision spawn). */
+async function ocrImageFiles(imagePaths: string[]): Promise<string[]> {
+  if (!imagePaths.length) return []
+  if (await isVisionAvailable()) {
+    try {
+      const pages = await ocrImagesWithVision(imagePaths)
+      return pages.map((p) => (p.text || '').trim())
+    } catch {
+      /* fall through */
+    }
+  }
+  const out: string[] = []
+  for (const p of imagePaths) {
+    try {
+      out.push(await ocrImageFileTesseract(p))
+    } catch {
+      out.push('')
+    }
+  }
+  return out
 }
 
 export async function extractDocumentText(filePath: string): Promise<ExtractResult> {

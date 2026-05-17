@@ -43,8 +43,11 @@ const SLUG_HINTS: Record<string, Array<{ re: RegExp; score: number }>> = {
     { re: /\bemployee\s+id\b|\bfederal\s+filing\s+status\b/i, score: 0.15 }
   ],
   passport: [
-    { re: /\bpassport\b/i, score: 0.35 },
-    { re: /\bunited\s+states\s+of\s+america\b/i, score: 0.12 }
+    { re: /\bpassport\b/i, score: 0.22 },
+    { re: /\b(?:type|code)\s*[:\/]?\s*P\b/i, score: 0.18 },
+    { re: /^P[A-Z<]{2}/m, score: 0.25 },
+    { re: /\bsurname\b[\s\S]{0,40}\bgiven\s+names?\b/i, score: 0.14 },
+    { re: /\bdate\s+of\s+(birth|expiry|issue)\b/i, score: 0.1 }
   ],
   drivers_license: [
     { re: /\bDRIVER\s+LICEN[SC]E\b|\bDMV\b/i, score: 0.3 },
@@ -55,9 +58,13 @@ const SLUG_HINTS: Record<string, Array<{ re: RegExp; score: number }>> = {
     { re: /\bregistry\s+of\s+vital\s+records\b/i, score: 0.2 }
   ],
   immigration_visa: [
-    { re: /\bvisa\b.*\bclassification\b|\bnonimmigrant\s+visa\b/i, score: 0.32 },
+    { re: /\bvisa\b/i, score: 0.18 },
+    { re: /\bnonimmigrant\s+visa\b|\bvisa\s+classification\b/i, score: 0.3 },
+    { re: /\b(?:visa\s*)?(?:type|class|category)\s*[:\/]?\s*(?:B[12]|B-?1\/B-?2|H-?1B|L-?[12]|O-?1|F-?[12]|J-?[12]|EB-?[1-5]|K-?[1-3])\b/i, score: 0.28 },
+    { re: /\bissuing\s+post\b|\bcontrol\s+number\b/i, score: 0.22 },
+    { re: /\b(?:annotation|entries)\s*[:\s]/i, score: 0.14 },
     { re: /\bI-94\b|\bI94\b/i, score: 0.22 },
-    { re: /\bH-1B\b|\bH1B\b|\bL-1\b|\bO-1\b/i, score: 0.18 }
+    { re: /\bB-?1\/B-?2\b|\bH-?1B\b|\bL-?[12]\b|\bO-?1\b|\bF-?[12]\b|\bJ-?[12]\b/i, score: 0.18 }
   ],
   immigration_green_card: [
     { re: /\bpermanent\s+resident\b|\bI-551\b|\bUSCIS#\b/i, score: 0.35 },
@@ -85,9 +92,9 @@ const FIELD_REGEX: Record<string, Record<string, RegExp>> = {
     period: /\b(pay\s+period|period\s+ending)[:\s]+([^\n]{4,40})/i
   },
   passport: {
-    passport_number: /\bpassport\s*(no\.?|number|#)?\s*[:\s]?\s*([A-Z0-9]{6,14})\b/i,
-    country: /\bnationality[:\s]+([A-Za-z][A-Za-z\s]{1,36}?)(?:\n|$|\s{2,}|[,.])/i,
-    expiry: /\bexp(?:ir(?:y|ation|es?))?\.?\s*[:\s.]+\s*(\d{1,2}[\s./-]+\d{1,2}[\s./-]+\d{2,4})/i
+    passport_number: /\bpassport\s*(?:no\.?|number|#)\s*[:\s]?\s*([A-Z][A-Z0-9]{5,13}|\d{6,14})\b/,
+    country: /\b(?:nationality|issuing\s+(?:country|state|authority|post)|country\s+code)[:\s]+([A-Za-z][A-Za-z\s]{1,36}?)(?:\n|$|\s{2,}|[,.])/i,
+    expiry: /\b(?:date\s+of\s+)?exp(?:ir(?:y|ation|es?))?\.?\s*[:\s.]+\s*(\d{1,2}\s+[A-Za-z]{3}\s+\d{2,4}|\d{1,2}[\s./-]+\d{1,2}[\s./-]+\d{2,4})/i
   },
   drivers_license: {
     dl_number: /\b(?:DL|LIC(?:ENSE)?)\s*[#:\s.]*\s*([A-Z0-9*]{5,})\b/i,
@@ -174,33 +181,74 @@ function fillIfEmpty(out: Record<string, string>, key: string, value: string | u
   out[key] = String(value).trim()
 }
 
+const COUNTRY_CODE_TO_NAME: Record<string, string> = {
+  USA: 'USA',
+  GBR: 'United Kingdom',
+  IND: 'India',
+  CAN: 'Canada',
+  AUS: 'Australia',
+  DEU: 'Germany',
+  FRA: 'France',
+  ITA: 'Italy',
+  ESP: 'Spain',
+  CHN: 'China',
+  JPN: 'Japan',
+  KOR: 'South Korea',
+  MEX: 'Mexico',
+  BRA: 'Brazil',
+  RUS: 'Russia',
+  ZAF: 'South Africa',
+  NLD: 'Netherlands',
+  SWE: 'Sweden',
+  CHE: 'Switzerland',
+  IRL: 'Ireland',
+  PAK: 'Pakistan',
+  BGD: 'Bangladesh',
+  PHL: 'Philippines',
+  SGP: 'Singapore',
+  ARE: 'United Arab Emirates',
+  NZL: 'New Zealand'
+}
+
+/** Validate a passport-number candidate: must contain at least one digit. */
+function isLikelyPassportNumber(s: string): boolean {
+  const v = s.trim()
+  if (v.length < 6 || v.length > 14) return false
+  if (!/\d/.test(v)) return false
+  if (!/^[A-Z0-9]+$/.test(v)) return false
+  return true
+}
+
 /** Extra heuristics for OCR-noisy passport images (MRZ-ish and common labels). */
 function enrichPassportFields(haystack: string, out: Record<string, string>) {
   const h = haystack.replace(/\r/g, '\n')
 
   const numPatterns = [
-    /\b([A-Z]\d{8,9})\b/,
-    /Passport\s*(?:No\.?|Number|#)?\s*[:\s]{0,3}([A-Z0-9]{6,14})\b/i,
+    /\bPassport\s*(?:No\.?|Number|#)\s*[:\s]{0,3}([A-Z0-9]{6,14})\b/i,
     /(?:^|\s)PPT\s*#?\s*([A-Z0-9]{6,14})\b/i,
-    /Document\s*No\.?\s*[:\s]*([A-Z0-9]{6,14})\b/i
+    /\bDocument\s*No\.?\s*[:\s]*([A-Z0-9]{6,14})\b/i,
+    /\b([A-Z]\d{7,9})\b/,
+    /\b(\d{8,10})\b/
   ]
   for (const re of numPatterns) {
     const m = h.match(re)
-    if (m?.[1]) {
+    if (m?.[1] && isLikelyPassportNumber(m[1])) {
       fillIfEmpty(out, 'passport_number', m[1])
       break
     }
   }
 
-  const mrz = h.match(/[\n\r]([A-Z0-9<]{9})\d([A-Z<]{3})/)
-  if (mrz?.[1]) {
-    const num = mrz[1].replace(/</g, '')
-    if (num.length >= 6) fillIfEmpty(out, 'passport_number', num)
+  const mrz = h.match(/(?:^|\n)P[A-Z<]{2}([A-Z<]{3})[A-Z<]+\n([A-Z0-9<]{9})\d([A-Z<]{3})/)
+  if (mrz) {
+    const docNum = (mrz[2] || '').replace(/</g, '')
+    if (isLikelyPassportNumber(docNum)) fillIfEmpty(out, 'passport_number', docNum)
+    const code = (mrz[3] || '').replace(/</g, '')
+    if (code) fillIfEmpty(out, 'country', COUNTRY_CODE_TO_NAME[code] || code)
   }
 
   const expPatterns = [
-    /Exp(?:ir(?:y|ation|es?))?\.?\s*[:\s.]+\s*(\d{1,2}[\s./-]+\d{1,2}[\s./-]+\d{2,4})/i,
-    /(?:Date\s+of\s+)?Exp(?:iry)?\s*[:\s]+\s*(\d{2}\s+[A-Za-z]{3}\s+\d{4})/i,
+    /(?:Date\s+of\s+)?Exp(?:ir(?:y|ation|es?))?\.?\s*[:\s.]+\s*(\d{1,2}\s+[A-Za-z]{3}\s+\d{2,4})/i,
+    /(?:Date\s+of\s+)?Exp(?:ir(?:y|ation|es?))?\.?\s*[:\s.]+\s*(\d{1,2}[\s./-]+\d{1,2}[\s./-]+\d{2,4})/i,
     /(\d{1,2}[\s./-]\d{1,2}[\s./-]\d{4})\s*(?:EXP|Expires?)\b/i
   ]
   for (const re of expPatterns) {
@@ -211,14 +259,50 @@ function enrichPassportFields(haystack: string, out: Record<string, string>) {
     }
   }
 
-  const nat = h.match(/Nationality[:\s]+([A-Za-z][A-Za-z\s]{0,28}?)(?:\n|$|\s{2,}|[,.])/i)
+  const nat = h.match(/\bNationality[:\s]+([A-Za-z][A-Za-z\s]{0,28}?)(?:\n|$|\s{2,}|[,.])/i)
   if (nat?.[1]) fillIfEmpty(out, 'country', nat[1].trim())
 
-  const iss = h.match(/Issuing\s+(?:country|state|authority)[:\s]+([A-Za-z][^\n]{0,30}?)(?:\n|$)/i)
+  const iss = h.match(/\bIssuing\s+(?:country|state|authority)[:\s]+([A-Za-z][^\n]{0,30}?)(?:\n|$)/i)
   if (iss?.[1]) fillIfEmpty(out, 'country', iss[1].trim())
 
   if (!out.country && /\bUnited\s+States\s+of\s+America\b/i.test(h)) fillIfEmpty(out, 'country', 'USA')
   if (!out.country && /\bUSA\b/i.test(h)) fillIfEmpty(out, 'country', 'USA')
+}
+
+/** Extract visa fields including type/expiry/country. */
+function enrichVisaFields(haystack: string, out: Record<string, string>) {
+  const h = haystack.replace(/\r/g, '\n')
+
+  const typePatterns = [
+    /\b(?:visa\s*)?(?:type|class|category)\s*[:\/]?\s*(B-?1\/B-?2|H-?1B|H-?2[AB]|L-?[12]|O-?1|F-?[12]|J-?[12]|EB-?[1-5]|K-?[1-3]|TN|E-?[123]|M-?[12]|R-?[12]|P-?[1-3]|Q|B-?[12])\b/i,
+    /\b(B-?1\/B-?2|H-?1B|L-?1A|L-?1B|O-?1|F-?1|J-?1)\b/i
+  ]
+  for (const re of typePatterns) {
+    const m = h.match(re)
+    if (m?.[1]) {
+      fillIfEmpty(out, 'visa_type', m[1].toUpperCase().replace(/\s+/g, ''))
+      break
+    }
+  }
+
+  const expPatterns = [
+    /\b(?:Expir(?:y|ation)\s+Date|Date\s+of\s+Expir(?:y|ation)|Valid\s+Until|Expires?)\s*[:\s]+\s*(\d{1,2}\s+[A-Za-z]{3}\s+\d{2,4})/i,
+    /\b(?:Expir(?:y|ation)\s+Date|Date\s+of\s+Expir(?:y|ation)|Valid\s+Until|Expires?)\s*[:\s]+\s*(\d{1,2}[\s./-]+\d{1,2}[\s./-]+\d{2,4})/i
+  ]
+  for (const re of expPatterns) {
+    const m = h.match(re)
+    if (m?.[1]) {
+      fillIfEmpty(out, 'expiry', m[1].trim())
+      break
+    }
+  }
+
+  const i94 = h.match(/\bI-?94\s*#?\s*:?\s*([0-9]{8,12})\b/i)
+  if (i94?.[1]) fillIfEmpty(out, 'i94', i94[1])
+
+  if (/\bUnited\s+States\s+of\s+America\b/i.test(h) || /\bU\.?S\.?\s+(?:visa|department\s+of\s+state)\b/i.test(h)) {
+    // Visas don't have a "country" schema field by default, but harmless if added later.
+  }
 }
 
 /** Extra heuristics for US-style driver licenses and PDF417-style labels. */
@@ -282,6 +366,7 @@ function extractFieldsForSlug(
 
   if (slug === 'passport') enrichPassportFields(haystack, out)
   else if (slug === 'drivers_license') enrichDriversLicenseFields(haystack, out)
+  else if (slug === 'immigration_visa') enrichVisaFields(haystack, out)
 
   if (slug === 'financial_tax_return' && !out.year) {
     const y = haystack.match(/\b(20[0-2]\d)\b/)

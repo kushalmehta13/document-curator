@@ -1,6 +1,6 @@
-# Document Curator
+# Document Cabinet
 
-A minimal **Electron + Vue 3** desktop app for organizing personal documents locally (immigration, IDs, academics, taxes, and similar). Files stay on your machine under a folder you choose (default: `~/Documents`). Nothing is uploaded to the cloud.
+A tidy, local home for your important paperwork — IDs, immigration papers, taxes, transcripts, and the rest. **Electron + Vue 3**. Files live on your Mac under a folder you choose (default: `~/Documents`). Nothing leaves the cabinet.
 
 ## Features
 
@@ -31,7 +31,7 @@ npm install
 CSC_IDENTITY_AUTO_DISCOVERY=false npm run dist
 ```
 
-Artifacts appear under `release/` (for example `Document Curator-0.1.0-arm64.dmg`). Open the DMG, drag **Document Curator** to Applications, and keep it in the Dock.
+Artifacts appear under `release/` (for example `Document Cabinet-0.1.0-arm64.dmg`). Open the DMG, drag **Document Cabinet** to Applications, and keep it in the Dock.
 
 To ship a signed build, configure macOS code signing and notarization as described in the [electron-builder code signing](https://www.electron.build/code-signing) documentation (then run `npm run dist` without disabling discovery).
 

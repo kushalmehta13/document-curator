@@ -110,6 +110,69 @@ const DEFAULT_CATEGORIES: Array<{
     path_template: 'Financial/PayStubs/{employer}',
     keywords: ['paystub', 'pay stub', 'payroll', 'salary'],
     metadata_schema: [{ key: 'employer', label: 'Employer' }, { key: 'period', label: 'Pay period' }]
+  },
+  {
+    name: 'Pet — vaccination record',
+    slug: 'pet_vaccination',
+    path_template: 'Pet/Vaccinations/{pet}',
+    keywords: ['vaccination', 'vaccine', 'rabies', 'distemper', 'bordetella', 'immunization'],
+    metadata_schema: [
+      { key: 'pet', label: 'Pet name' },
+      { key: 'vaccine', label: 'Vaccine' },
+      { key: 'issue_date', label: 'Date administered' },
+      { key: 'expiry', label: 'Booster due' },
+      { key: 'veterinarian', label: 'Veterinarian / clinic' }
+    ]
+  },
+  {
+    name: 'Pet — medical record',
+    slug: 'pet_medical',
+    path_template: 'Pet/Medical/{pet}',
+    keywords: ['veterinary', 'vet visit', 'medical record', 'lab results', 'treatment', 'diagnosis'],
+    metadata_schema: [
+      { key: 'pet', label: 'Pet name' },
+      { key: 'visit_date', label: 'Visit date' },
+      { key: 'reason', label: 'Reason / diagnosis' },
+      { key: 'veterinarian', label: 'Veterinarian / clinic' }
+    ]
+  },
+  {
+    name: 'Pet — adoption / registration',
+    slug: 'pet_registration',
+    path_template: 'Pet/Registration/{pet}',
+    keywords: ['adoption', 'pedigree', 'registration', 'breeder', 'akc', 'shelter', 'license tag'],
+    metadata_schema: [
+      { key: 'pet', label: 'Pet name' },
+      { key: 'breed', label: 'Breed' },
+      { key: 'birth_date', label: 'Date of birth' },
+      { key: 'registration_number', label: 'Registration / tag #' },
+      { key: 'issued_by', label: 'Issued by' }
+    ]
+  },
+  {
+    name: 'Pet — microchip',
+    slug: 'pet_microchip',
+    path_template: 'Pet/Microchip/{pet}',
+    keywords: ['microchip', 'chip number', 'avid', 'home again', 'petlink'],
+    metadata_schema: [
+      { key: 'pet', label: 'Pet name' },
+      { key: 'chip_number', label: 'Microchip number' },
+      { key: 'registry', label: 'Registry' },
+      { key: 'issue_date', label: 'Date implanted' }
+    ]
+  },
+  {
+    name: 'Pet — insurance',
+    slug: 'pet_insurance',
+    path_template: 'Pet/Insurance/{pet}',
+    keywords: ['pet insurance', 'policy', 'coverage', 'trupanion', 'healthy paws', 'embrace'],
+    metadata_schema: [
+      { key: 'pet', label: 'Pet name' },
+      { key: 'insurer', label: 'Insurer' },
+      { key: 'policy_number', label: 'Policy number' },
+      { key: 'issue_date', label: 'Effective date' },
+      { key: 'expiry', label: 'Renewal date' }
+    ]
   }
 ]
 

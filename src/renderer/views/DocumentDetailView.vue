@@ -14,9 +14,17 @@ type Category = {
   metadata_schema: string | null
 }
 
+type ProfileLite = {
+  id: number
+  name: string
+  kind: 'person' | 'family' | 'pet'
+}
+
 const doc = ref<Record<string, unknown> | null>(null)
 const categories = ref<Category[]>([])
+const profiles = ref<ProfileLite[]>([])
 const categoryId = ref<number | null>(null)
+const profileId = ref<number | null>(null)
 const templateVars = ref<Record<string, string>>({})
 const metadata = ref<Record<string, string>>({})
 const busy = ref(false)
@@ -146,6 +154,71 @@ const previewSrc = computed(() => {
   return window.api.previewUrl(Number(doc.value.id))
 })
 
+const DATE_KEY_RE = /(?:^|_)(date|expiry|expires|expiration|issued|issue|dob|birth|valid_from|valid_until|valid_to|renewal)(?:_|$)/i
+
+function isDateLikeKey(key: string): boolean {
+  if (!key) return false
+  if (key === 'year') return false
+  return DATE_KEY_RE.test(key)
+}
+
+function monthIndex(name: string): number | null {
+  const months = ['jan', 'feb', 'mar', 'apr', 'may', 'jun', 'jul', 'aug', 'sep', 'oct', 'nov', 'dec']
+  const i = months.indexOf(name.toLowerCase().slice(0, 3))
+  return i >= 0 ? i : null
+}
+
+function formatIso(y: number, mZeroBased: number, d: number): string {
+  if (!Number.isFinite(y) || !Number.isFinite(mZeroBased) || !Number.isFinite(d)) return ''
+  if (mZeroBased < 0 || mZeroBased > 11) return ''
+  if (d < 1 || d > 31) return ''
+  return `${String(y).padStart(4, '0')}-${String(mZeroBased + 1).padStart(2, '0')}-${String(d).padStart(2, '0')}`
+}
+
+/** Best-effort parse of OCR'd date strings into YYYY-MM-DD. Returns '' if unsure. */
+function toIsoDate(raw: string | undefined | null): string {
+  if (!raw) return ''
+  const s = String(raw).trim()
+  if (!s) return ''
+  if (/^\d{4}-\d{2}-\d{2}$/.test(s)) return s
+  const m1 = s.match(/^(\d{1,2})\s+([A-Za-z]{3,9})\s+(\d{2,4})$/)
+  if (m1) {
+    const mo = monthIndex(m1[2])
+    if (mo != null) {
+      let y = parseInt(m1[3], 10)
+      if (y < 100) y += y < 40 ? 2000 : 1900
+      return formatIso(y, mo, parseInt(m1[1], 10))
+    }
+  }
+  const m2 = s.match(/^([A-Za-z]{3,9})\s+(\d{1,2}),?\s+(\d{2,4})$/)
+  if (m2) {
+    const mo = monthIndex(m2[1])
+    if (mo != null) {
+      let y = parseInt(m2[3], 10)
+      if (y < 100) y += y < 40 ? 2000 : 1900
+      return formatIso(y, mo, parseInt(m2[2], 10))
+    }
+  }
+  const m3 = s.match(/^(\d{4})[\/\-.](\d{1,2})[\/\-.](\d{1,2})$/)
+  if (m3) return formatIso(parseInt(m3[1], 10), parseInt(m3[2], 10) - 1, parseInt(m3[3], 10))
+  const m4 = s.match(/^(\d{1,2})[\/\-.](\d{1,2})[\/\-.](\d{2,4})$/)
+  if (m4) {
+    const a = parseInt(m4[1], 10)
+    const b = parseInt(m4[2], 10)
+    let y = parseInt(m4[3], 10)
+    if (y < 100) y += y < 40 ? 2000 : 1900
+    let mo: number, d: number
+    if (a > 12) { d = a; mo = b }
+    else { mo = a; d = b }
+    return formatIso(y, mo - 1, d)
+  }
+  return ''
+}
+
+function onDatePick(key: string, iso: string): void {
+  metadata.value = { ...metadata.value, [key]: iso }
+}
+
 function parseJsonObject(s: unknown): Record<string, string> {
   if (!s || typeof s !== 'string') return {}
   try {
@@ -212,9 +285,11 @@ async function load() {
   doc.value = d ?? null
   if (!d) return
   categoryId.value = (d.category_id as number) || null
+  profileId.value = d.profile_id != null ? Number(d.profile_id) : null
   metadata.value = parseJsonObject(d.metadata)
   templateVars.value = parseJsonObject(d.template_vars)
   categories.value = (await window.api.categories.list()) as Category[]
+  profiles.value = (await window.api.profiles.list()) as ProfileLite[]
   const schemaFromDoc = parseSchema(d.metadata_schema)
   ensureSchemaKeysInMetadata(schemaFromDoc)
   const sel = categories.value.find((c) => c.id === categoryId.value)
@@ -298,8 +373,7 @@ async function finalize() {
       metadata: metadataForExport(),
       filingStem: filingName.value.trim()
     })
-    msg.value = 'Filed'
-    await load()
+    router.push('/library')
   } catch (e) {
     msg.value = e instanceof Error ? e.message : 'Could not file document'
   } finally {
@@ -472,6 +546,22 @@ async function submitNewType() {
   }
 }
 
+async function changeProfile(next: number | null) {
+  if (!doc.value) return
+  busy.value = true
+  msg.value = ''
+  try {
+    await window.api.documents.setProfile(Number(doc.value.id), next)
+    profileId.value = next
+    await load()
+    msg.value = 'Profile updated. Filed documents keep their existing folder until you re-file them.'
+  } catch (e) {
+    msg.value = e instanceof Error ? e.message : 'Could not change profile'
+  } finally {
+    busy.value = false
+  }
+}
+
 async function reveal() {
   const p = doc.value?.stored_path as string
   if (p) await window.api.shell.reveal(p)
@@ -487,7 +577,7 @@ async function openDefault() {
   <div v-if="!doc" class="muted">Not found.</div>
   <div v-else class="layout stack">
     <RouterLink :to="isDraft ? '/inbox' : '/library'" class="back-link">
-      ← {{ isDraft ? 'Back to Inbox' : 'Back to Library' }}
+      ← {{ isDraft ? 'Back to the tray' : 'Back to the cabinet' }}
     </RouterLink>
     <div class="row" style="justify-content: space-between; align-items: flex-start">
       <div>
@@ -576,7 +666,7 @@ async function openDefault() {
 
     <div class="grid">
       <section class="card stack preview-card">
-        <h2 style="margin: 0; font-size: 1rem">Preview</h2>
+        <h2 class="section-title" style="margin: 0">Preview</h2>
         <div class="preview-frame">
           <img v-if="isImage" :src="previewSrc" alt="Preview" class="preview-img" />
           <iframe v-else-if="isPdf" class="preview-pdf" title="PDF" :src="previewSrc" />
@@ -590,7 +680,24 @@ async function openDefault() {
 
       <section class="card stack">
         <template v-if="isDraft">
-          <h2 style="margin: 0; font-size: 1rem">File this document</h2>
+          <h2 class="section-title" style="margin: 0">Label & file</h2>
+          <div>
+            <label>Profile</label>
+            <select
+              :value="profileId == null ? '' : profileId"
+              :disabled="busy"
+              @change="changeProfile(($event.target as HTMLSelectElement).value === '' ? null : Number(($event.target as HTMLSelectElement).value))"
+            >
+              <option value="">No profile (shared)</option>
+              <option v-for="p in profiles" :key="p.id" :value="p.id">
+                {{ p.name }}{{ p.kind === 'family' ? ' (family)' : p.kind === 'pet' ? ' (pet)' : '' }}
+              </option>
+            </select>
+            <p class="muted small" style="margin: 0.25rem 0 0">
+              Files for this profile will land under <code>{{ profiles.find((p) => p.id === profileId)?.name || '—' }}</code>
+              within the documents root.
+            </p>
+          </div>
           <div>
             <label>Category</label>
             <select v-model.number="categoryId">
@@ -630,7 +737,7 @@ async function openDefault() {
           </div>
 
           <div class="row" style="justify-content: space-between; margin-top: 0.75rem">
-            <h2 style="margin: 0; font-size: 1rem">Metadata</h2>
+            <h2 class="section-title" style="margin: 0">Metadata</h2>
             <button type="button" class="ghost" @click="copyJson">Copy JSON</button>
           </div>
           <p class="muted" style="margin: 0">
@@ -640,7 +747,13 @@ async function openDefault() {
           <div v-for="f in schemaFields" :key="'s-' + f.key" class="field-row">
             <div class="grow">
               <label>{{ f.label }}</label>
-              <input v-model="metadata[f.key]" />
+              <input
+                v-if="isDateLikeKey(f.key)"
+                type="date"
+                :value="toIsoDate(metadata[f.key])"
+                @input="onDatePick(f.key, ($event.target as HTMLInputElement).value)"
+              />
+              <input v-else v-model="metadata[f.key]" />
             </div>
             <button type="button" class="ghost" @click="copyField(f.key)">Copy</button>
           </div>
@@ -650,7 +763,13 @@ async function openDefault() {
           <div v-for="key in extraMetadataKeys" :key="'x-' + key" class="field-row">
             <div class="grow">
               <label>{{ key }} <span class="muted small">(custom)</span></label>
-              <input v-model="metadata[key]" />
+              <input
+                v-if="isDateLikeKey(key)"
+                type="date"
+                :value="toIsoDate(metadata[key])"
+                @input="onDatePick(key, ($event.target as HTMLInputElement).value)"
+              />
+              <input v-else v-model="metadata[key]" />
             </div>
             <button type="button" class="ghost" @click="copyField(key)">Copy</button>
           </div>
@@ -689,21 +808,43 @@ async function openDefault() {
           <div class="row" style="margin-top: 0.75rem">
             <button type="button" @click="saveProgress" :disabled="busy">Save progress</button>
             <button type="button" class="primary" @click="finalize" :disabled="busy">
-              Move to library
+              File it
             </button>
           </div>
         </template>
 
         <template v-else>
+          <div>
+            <label>Profile</label>
+            <select
+              :value="profileId == null ? '' : profileId"
+              :disabled="busy"
+              @change="changeProfile(($event.target as HTMLSelectElement).value === '' ? null : Number(($event.target as HTMLSelectElement).value))"
+            >
+              <option value="">No profile (shared)</option>
+              <option v-for="p in profiles" :key="p.id" :value="p.id">
+                {{ p.name }}{{ p.kind === 'family' ? ' (family)' : p.kind === 'pet' ? ' (pet)' : '' }}
+              </option>
+            </select>
+            <p class="muted small" style="margin: 0.25rem 0 0">
+              Changing the profile updates the database; the file on disk stays where it was.
+            </p>
+          </div>
           <div class="row" style="justify-content: space-between">
-            <h2 style="margin: 0; font-size: 1rem">Metadata</h2>
+            <h2 class="section-title" style="margin: 0">Metadata</h2>
             <button type="button" class="ghost" @click="copyJson">Copy JSON</button>
           </div>
           <p class="muted" style="margin: 0">Copy fields when filling forms.</p>
           <div v-for="f in schemaFields" :key="'sf-' + f.key" class="field-row">
             <div class="grow">
               <label>{{ f.label }}</label>
-              <input v-model="metadata[f.key]" />
+              <input
+                v-if="isDateLikeKey(f.key)"
+                type="date"
+                :value="toIsoDate(metadata[f.key])"
+                @input="onDatePick(f.key, ($event.target as HTMLInputElement).value)"
+              />
+              <input v-else v-model="metadata[f.key]" />
             </div>
             <button type="button" class="ghost" @click="copyField(f.key)">Copy</button>
           </div>
@@ -713,7 +854,13 @@ async function openDefault() {
           <div v-for="key in extraMetadataKeys" :key="'ef-' + key" class="field-row">
             <div class="grow">
               <label>{{ key }} <span class="muted small">(custom)</span></label>
-              <input v-model="metadata[key]" />
+              <input
+                v-if="isDateLikeKey(key)"
+                type="date"
+                :value="toIsoDate(metadata[key])"
+                @input="onDatePick(key, ($event.target as HTMLInputElement).value)"
+              />
+              <input v-else v-model="metadata[key]" />
             </div>
             <button type="button" class="ghost" @click="copyField(key)">Copy</button>
           </div>
@@ -755,7 +902,7 @@ async function openDefault() {
 
     <div v-if="showNewType" class="modal-backdrop" @click.self="showNewType = false">
       <div class="modal card stack">
-        <h2 style="margin: 0; font-size: 1.05rem">New document type</h2>
+        <h2 class="section-title" style="margin: 0">New drawer</h2>
         <p class="muted" style="margin: 0">
           Creates a category with a path template and metadata fields. Everything stays on this Mac.
         </p>
@@ -823,9 +970,10 @@ async function openDefault() {
 }
 .doc-title {
   margin: 0;
-  font-size: 1.35rem;
-  font-weight: 700;
-  letter-spacing: -0.02em;
+  font-family: var(--serif);
+  font-size: 1.45rem;
+  font-weight: 600;
+  letter-spacing: -0.01em;
 }
 
 .path-line {

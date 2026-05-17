@@ -15,9 +15,9 @@ const router = createRouter({
       name: 'inbox',
       component: InboxView,
       meta: {
-        title: 'Inbox',
+        title: 'Intake tray',
         tagline:
-          'Add files when you have a moment—drafts wait here until you are ready to sort them into your library.'
+          'Drop new paperwork here. Drafts wait on the tray until you label them and slide them into a drawer.'
       }
     },
     {
@@ -25,8 +25,8 @@ const router = createRouter({
       name: 'library',
       component: LibraryView,
       meta: {
-        title: 'Library',
-        tagline: 'Everything you have filed lives here. Filter by category or open a document for preview and metadata.'
+        title: 'The cabinet',
+        tagline: 'Every filed document, sitting where it belongs. Pick a drawer or open a document for its details.'
       }
     },
     {
@@ -40,9 +40,9 @@ const router = createRouter({
       name: 'bundles',
       component: BundlesView,
       meta: {
-        title: 'Bundles',
+        title: 'Folders',
         tagline:
-          'Think of a bundle as a smart checklist for a form or application—attach the right documents over time.'
+          'A folder is a checklist for a form or application — collect the right documents into one tabbed dossier.'
       }
     },
     {
@@ -56,8 +56,8 @@ const router = createRouter({
       name: 'settings',
       component: SettingsView,
       meta: {
-        title: 'Settings',
-        tagline: 'Tune where files land on disk and how categories behave—still entirely on your machine.'
+        title: 'Workshop',
+        tagline: 'Adjust where the cabinet keeps your files and how each drawer is labelled — still entirely on your machine.'
       }
     }
   ]

@@ -1,11 +1,14 @@
 {
   "name": "document-curator",
   "version": "0.1.0",
-  "description": "Local document organizer for IDs, immigration, taxes, and bundles",
+  "description": "Document Cabinet — a tidy, local home for your important paperwork",
   "main": "out/main/index.js",
   "author": "",
   "license": "MIT",
   "scripts": {
+    "build:mac-vision": "node scripts/build-mac-vision.js",
+    "predev": "node scripts/build-mac-vision.js",
+    "prebuild": "node scripts/build-mac-vision.js",
     "dev": "electron-vite dev",
     "build": "electron-vite build",
     "dist": "npm run build && electron-builder",
@@ -34,7 +37,7 @@
   },
   "build": {
     "appId": "com.documentcurator.app",
-    "productName": "Document Curator",
+    "productName": "Document Cabinet",
     "directories": {
       "output": "release"
     },
@@ -46,6 +49,10 @@
       {
         "from": "resources/bundle-templates",
         "to": "bundle-templates"
+      },
+      {
+        "from": "resources/bin",
+        "to": "bin"
       }
     ],
     "asarUnpack": [
